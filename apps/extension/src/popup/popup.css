@@ -1,0 +1,23 @@
+/* The popup gives the shared ChatWindow a fixed canvas instead of floating. */
+html,
+body {
+  margin: 0;
+  width: 380px;
+  height: 600px;
+  overflow: hidden;
+}
+#root {
+  width: 100%;
+  height: 100%;
+}
+/* Pin the shared panel to fill the popup rather than anchor bottom-right. */
+.lch-panel {
+  position: static;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}

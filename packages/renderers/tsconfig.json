@@ -1,0 +1,7 @@
+{
+  "extends": "@livechat-hub/tsconfig/react-library.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*"]
+}

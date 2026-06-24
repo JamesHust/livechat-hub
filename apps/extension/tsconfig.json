@@ -1,0 +1,7 @@
+{
+  "extends": "@livechat-hub/tsconfig/vite-app.json",
+  "compilerOptions": {
+    "types": ["vite/client", "chrome", "node"]
+  },
+  "include": ["src", "vite.config.ts", "manifest.config.ts"]
+}

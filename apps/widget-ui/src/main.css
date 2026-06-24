@@ -1,0 +1,9 @@
+/* Standalone harness chrome only — the widget itself is fully token-driven.
+ * A rich gradient gives the frosted-glass panel something to blur. */
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 45%, #7dd3fc 100%);
+  background-attachment: fixed;
+}

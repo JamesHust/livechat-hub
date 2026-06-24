@@ -1,0 +1,25 @@
+{
+  "name": "@livechat-hub/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@livechat-hub/shared": "workspace:*",
+    "@livechat-hub/transport": "workspace:*",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@livechat-hub/eslint-config": "workspace:*",
+    "@livechat-hub/tsconfig": "workspace:*",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  }
+}

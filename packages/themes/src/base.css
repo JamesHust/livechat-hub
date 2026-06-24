@@ -1,0 +1,298 @@
+/*
+ * LiveChat Hub base stylesheet.
+ *
+ * Authored against the `--lch-*` token contract so it is fully theme-driven and
+ * white-labelable at runtime. Self-contained (no global resets that leak) so it
+ * is safe to adopt inside a Shadow DOM root. Class names are namespaced `lch-`.
+ */
+
+.lch-root,
+.lch-root * {
+  box-sizing: border-box;
+}
+
+.lch-root {
+  font-family: var(--lch-font-family);
+  font-size: var(--lch-font-size);
+  color: var(--lch-text);
+  line-height: 1.5;
+}
+
+/* ---- Launcher ---------------------------------------------------------- */
+.lch-launcher {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 9999px;
+  background: var(--lch-primary);
+  color: var(--lch-primary-foreground);
+  cursor: pointer;
+  box-shadow: var(--lch-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2147483000;
+}
+.lch-launcher:hover {
+  filter: brightness(1.05);
+}
+
+/* ---- Panel ------------------------------------------------------------- */
+.lch-panel {
+  position: fixed;
+  bottom: 88px;
+  right: 20px;
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  height: 600px;
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  background: var(--lch-background);
+  border: 1px solid var(--lch-border);
+  border-radius: var(--lch-radius-lg);
+  box-shadow: var(--lch-shadow);
+  overflow: hidden;
+  z-index: 2147483000;
+}
+
+.lch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--lch-surface);
+  border-bottom: 1px solid var(--lch-border);
+}
+.lch-header__title {
+  font-weight: 600;
+  margin: 0;
+}
+.lch-header__subtitle {
+  margin: 0;
+  font-size: 0.8em;
+  color: var(--lch-text-muted);
+}
+.lch-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--lch-text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--lch-radius-sm);
+  line-height: 0;
+}
+.lch-icon-btn:hover {
+  background: var(--lch-surface-muted);
+  color: var(--lch-text);
+}
+
+/* ---- Message list ------------------------------------------------------ */
+.lch-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--lch-background);
+}
+.lch-empty {
+  margin: auto;
+  color: var(--lch-text-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.lch-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+.lch-message--user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.lch-message--assistant,
+.lch-message--system,
+.lch-message--tool {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.lch-bubble {
+  padding: 9px 13px;
+  border-radius: var(--lch-radius-md);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.lch-message--user .lch-bubble {
+  background: var(--lch-user-bubble);
+  color: var(--lch-user-bubble-foreground);
+  border-bottom-right-radius: var(--lch-radius-sm);
+}
+.lch-message--assistant .lch-bubble {
+  background: var(--lch-assistant-bubble);
+  color: var(--lch-assistant-bubble-foreground);
+  border-bottom-left-radius: var(--lch-radius-sm);
+}
+
+/* ---- Parts ------------------------------------------------------------- */
+.lch-part + .lch-part {
+  margin-top: 8px;
+}
+.lch-markdown p {
+  margin: 0 0 0.5em;
+}
+.lch-markdown p:last-child {
+  margin-bottom: 0;
+}
+.lch-markdown pre {
+  background: var(--lch-surface-muted);
+  padding: 10px;
+  border-radius: var(--lch-radius-sm);
+  overflow-x: auto;
+}
+.lch-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+.lch-reasoning {
+  border-left: 3px solid var(--lch-border);
+  padding-left: 10px;
+  color: var(--lch-text-muted);
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+.lch-tool {
+  border: 1px solid var(--lch-border);
+  border-radius: var(--lch-radius-sm);
+  padding: 8px 10px;
+  background: var(--lch-surface);
+  font-size: 0.9em;
+}
+.lch-tool__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--lch-text-muted);
+}
+.lch-tool pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.lch-media {
+  max-width: 100%;
+  border-radius: var(--lch-radius-sm);
+  display: block;
+}
+.lch-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--lch-border);
+  border-radius: var(--lch-radius-sm);
+  color: var(--lch-text);
+  text-decoration: none;
+  background: var(--lch-surface);
+}
+.lch-sources {
+  margin-top: 8px;
+  font-size: 0.85em;
+}
+.lch-sources a {
+  color: var(--lch-primary);
+}
+.lch-canvas {
+  border: 1px dashed var(--lch-border);
+  border-radius: var(--lch-radius-sm);
+  padding: 10px;
+  background: var(--lch-surface);
+}
+
+/* ---- Typing indicator -------------------------------------------------- */
+.lch-typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 10px 13px;
+}
+.lch-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--lch-text-muted);
+  animation: lch-bounce 1.2s infinite ease-in-out;
+}
+.lch-typing span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.lch-typing span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes lch-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ---- Composer ---------------------------------------------------------- */
+.lch-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 12px;
+  border-top: 1px solid var(--lch-border);
+  background: var(--lch-surface);
+}
+.lch-composer__input {
+  flex: 1;
+  resize: none;
+  max-height: 120px;
+  border: 1px solid var(--lch-border);
+  border-radius: var(--lch-radius-md);
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--lch-text);
+  background: var(--lch-background);
+  outline: none;
+}
+.lch-composer__input:focus {
+  border-color: var(--lch-primary);
+}
+.lch-send {
+  border: none;
+  border-radius: var(--lch-radius-md);
+  background: var(--lch-primary);
+  color: var(--lch-primary-foreground);
+  padding: 9px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+.lch-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.lch-error {
+  color: var(--lch-danger);
+  font-size: 0.85em;
+  padding: 0 12px 8px;
+}
+.lch-error button {
+  background: none;
+  border: none;
+  color: var(--lch-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}

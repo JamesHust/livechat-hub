@@ -1,0 +1,367 @@
+/*
+ * LiveChat Hub widget stylesheet (Tailwind v4 + shadcn/ui).
+ *
+ * Imported with Vite's `?inline` by the SDK so the compiled CSS is injected
+ * into the Shadow DOM (style isolation from the host page). The shadcn token
+ * contract (`--background`, `--primary`, …) is BRIDGED onto the runtime
+ * white-label tokens (`--lch-*`) set by `applyThemeToElement`, so calling
+ * `setTheme()` keeps restyling shadcn components live, with no rebuild.
+ */
+
+@import 'tailwindcss';
+
+/* Scan the widget + shadcn primitives for utility classes. Relative to this
+ * file, resolved against the package's real path even via the pnpm symlink.
+ * `hooks` is listed too so class names produced there (e.g. the responsive
+ * control sizes in `use-control-size`) are emitted, not just those in JSX. */
+@source './components';
+@source './hooks';
+
+/* Drive `dark:` utilities off the theme that `applyThemeToElement` stamps on
+ * the root element (`data-lch-color-scheme`), instead of a `.dark` class. */
+@custom-variant dark (&:where([data-lch-color-scheme='dark'], [data-lch-color-scheme='dark'] *));
+
+/* shadcn semantic tokens → LiveChat Hub runtime tokens. Declared on every root
+ * the widget can mount under: :root (widget-ui dev), :host + .lch-root (SDK
+ * Shadow DOM), so `var(--lch-*)` always resolves in the components' ancestry. */
+:root,
+:host,
+.lch-root {
+  --background: var(--lch-background);
+  --foreground: var(--lch-text);
+  --card: var(--lch-surface);
+  --card-foreground: var(--lch-text);
+  --popover: var(--lch-surface);
+  --popover-foreground: var(--lch-text);
+  --primary: var(--lch-primary);
+  --primary-foreground: var(--lch-primary-foreground);
+  --secondary: var(--lch-surface-muted);
+  --secondary-foreground: var(--lch-text);
+  --muted: var(--lch-surface-muted);
+  --muted-foreground: var(--lch-text-muted);
+  --accent: var(--lch-surface-muted);
+  --accent-foreground: var(--lch-text);
+  --destructive: var(--lch-danger);
+  --border: var(--lch-border);
+  --input: var(--lch-border);
+  --ring: var(--lch-primary);
+
+  /* Foreground on the accent gradient (launcher, avatar, send button). */
+  --on-gradient: var(--lch-gradient-foreground);
+
+  /* Widget-specific message bubble tokens. */
+  --user-bubble: var(--lch-user-bubble);
+  --user-bubble-foreground: var(--lch-user-bubble-foreground);
+  --assistant-bubble: var(--lch-assistant-bubble);
+  --assistant-bubble-foreground: var(--lch-assistant-bubble-foreground);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-on-gradient: var(--on-gradient);
+
+  --color-user-bubble: var(--user-bubble);
+  --color-user-bubble-foreground: var(--user-bubble-foreground);
+  --color-assistant-bubble: var(--assistant-bubble);
+  --color-assistant-bubble-foreground: var(--assistant-bubble-foreground);
+
+  --radius-sm: var(--lch-radius-sm);
+  --radius-md: var(--lch-radius-md);
+  --radius-lg: var(--lch-radius-lg);
+  --radius-xl: var(--lch-radius-lg);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    /* Use the real emitted `--border` property, NOT `--color-border`: the latter
+     * lives in `@theme inline`, which inlines into utilities and is never emitted
+     * as a CSS var, so `var(--color-border)` resolved to `currentColor` and made
+     * every bare `border` render near-black. `--border` → `--lch-border` (the
+     * subtle hairline token). */
+    border-color: var(--border, currentColor);
+  }
+
+  :host,
+  .lch-root {
+    font-family: var(--lch-font-family);
+    font-size: var(--lch-font-size);
+    color: var(--foreground);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/*
+ * Message-part renderer styles (`@livechat-hub/renderers`). These components are
+ * outside the widget UI rebuild but render inside the panel, so their `lch-*`
+ * classes are preserved here against the same runtime token contract.
+ */
+@layer components {
+  .lch-part + .lch-part {
+    margin-top: 8px;
+  }
+  .lch-markdown p {
+    margin: 0 0 0.5em;
+  }
+  .lch-markdown p:last-child {
+    margin-bottom: 0;
+  }
+  .lch-markdown pre {
+    background: var(--lch-surface-muted);
+    padding: 10px 12px;
+    border-radius: var(--lch-radius-sm);
+    overflow-x: auto;
+  }
+  .lch-markdown code {
+    font-family: var(--lch-font-mono);
+    font-size: 0.9em;
+  }
+  .lch-markdown a {
+    color: var(--lch-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .lch-reasoning {
+    border-left: 3px solid var(--lch-primary);
+    padding-left: 10px;
+    color: var(--lch-text-muted);
+    font-size: 0.92em;
+    white-space: pre-wrap;
+  }
+  .lch-reasoning summary {
+    cursor: pointer;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .lch-tool {
+    border-radius: var(--lch-radius-md);
+    padding: 9px 11px;
+    /* Fill-only card (no border) so tool blocks nested inside a bubble don't
+     * read as a box-in-a-box — the tonal fill alone separates them. */
+    background: var(--lch-surface-muted);
+    font-size: 0.9em;
+  }
+  .lch-tool__head {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--lch-text-muted);
+    font-family: var(--lch-font-mono);
+    font-size: 0.92em;
+  }
+  .lch-tool__head svg {
+    flex-shrink: 0;
+  }
+  .lch-tool[data-error='true'] .lch-tool__head {
+    color: var(--lch-danger);
+  }
+  .lch-tool pre {
+    margin: 6px 0 0;
+    font-family: var(--lch-font-mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .lch-media {
+    max-width: 100%;
+    border-radius: var(--lch-radius-sm);
+    display: block;
+  }
+  .lch-audio {
+    margin: 0;
+  }
+  .lch-audio figcaption {
+    margin-bottom: 4px;
+    font-size: 0.8em;
+    color: var(--lch-text-muted);
+  }
+  .lch-audio audio {
+    width: 100%;
+    max-width: 260px;
+    height: 38px;
+  }
+  .lch-file {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 11px;
+    border-radius: var(--lch-radius-md);
+    color: var(--lch-text);
+    text-decoration: none;
+    background: var(--lch-surface-muted);
+    transition: background-color 0.15s ease;
+  }
+  .lch-file:hover {
+    background: var(--lch-primary-soft);
+  }
+  .lch-file svg {
+    flex-shrink: 0;
+    color: var(--lch-primary);
+  }
+  .lch-sources {
+    margin-top: 8px;
+    font-size: 0.85em;
+  }
+  .lch-sources a {
+    color: var(--lch-primary);
+  }
+  .lch-canvas {
+    border: 1px dashed var(--lch-border);
+    border-radius: var(--lch-radius-sm);
+    padding: 10px;
+    background: var(--lch-surface);
+  }
+
+  /* Shared agent brand mascot (launcher + avatar). `--lch-mark-ink` is the
+   * headset/eye/mouth colour — a deepened primary (with a plain-primary
+   * fallback below). Each eye glint pivots around its own centre to twinkle. */
+  .lch-mark {
+    display: block;
+    --lch-mark-ink: var(--lch-primary);
+  }
+  .lch-mark__glint {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+}
+
+/* Deepen the ink to a darker blue where `color-mix` is supported, so the headset
+ * and eyes read as a richer shade than the bright primary cheeks/tile. */
+@supports (color: color-mix(in srgb, red, blue)) {
+  .lch-mark {
+    --lch-mark-ink: color-mix(in srgb, var(--lch-primary), black 32%);
+  }
+}
+
+/*
+ * Idle motion for the mascot — a gentle float (the bubble hovers) plus softly
+ * sparkling eyes. Smooth, organic micro-interactions kept in CSS (per CLAUDE.md),
+ * gated on `prefers-reduced-motion` so it degrades to a still mark. Only the
+ * `--animated` placements (launcher, header, hero) opt in.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .lch-mark--animated {
+    animation: lch-float 3.6s ease-in-out infinite;
+  }
+  .lch-mark--animated .lch-mark__glint {
+    animation: lch-glint 2.6s ease-in-out infinite;
+  }
+}
+@keyframes lch-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1.4px);
+  }
+}
+@keyframes lch-glint {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+
+/*
+ * Mobile / touch refinements. These live OUTSIDE Tailwind's cascade layers so
+ * they win over the layered utilities (e.g. the composer's `text-sm`) without
+ * `!important`. Unlayered rules always beat layered ones in the CSS cascade.
+ */
+
+/* iOS Safari auto-zooms when a focused input's font-size is < 16px. Force the
+ * composer input to 16px on coarse pointers (phones/tablets) regardless of
+ * viewport width, so focusing the field never zooms and breaks the layout. */
+@media (pointer: coarse) {
+  [data-slot='textarea'] {
+    font-size: 16px;
+  }
+}
+
+/* Full-screen mobile panel: keep the header below the notch / dynamic island
+ * and the composer above the home indicator. When the keyboard is open iOS
+ * reports a 0 bottom inset, so the composer sits flush above the keyboard. */
+.lch-panel[data-fullscreen] {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/*
+ * Scroll surfaces. We keep native scrolling (so streaming auto-scroll, momentum
+ * and the composer's keyboard-pin keep working, and we add no bundle weight) but
+ * restyle the bar to match large chat apps. Colors come from the `--lch-*` text
+ * token via `color-mix`, so it tracks the theme. The message list and the emoji
+ * tray share one treatment so scrolling feels identical across the widget.
+ */
+
+/* Desktop / mouse: a slim, rounded, track-less thumb that darkens on hover. */
+@media (pointer: fine) {
+  :where([data-slot='message-list'], [data-slot='emoji-scroll']) {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--lch-text) 22%, transparent) transparent;
+  }
+  /* Emoji tray only: drop the right padding and let the scrollbar live in a
+   * stable gutter in its place. Both sides then read an equal 8px inset — no
+   * left/right asymmetry and no wasted empty gutter. (Touch keeps the symmetric
+   * `px-2` since the bar is hidden there.) */
+  [data-slot='emoji-scroll'] {
+    scrollbar-gutter: stable;
+    padding-right: 0;
+  }
+  :where([data-slot='message-list'], [data-slot='emoji-scroll'])::-webkit-scrollbar {
+    width: 8px;
+  }
+  :where([data-slot='message-list'], [data-slot='emoji-scroll'])::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  :where([data-slot='message-list'], [data-slot='emoji-scroll'])::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--lch-text) 22%, transparent);
+    border-radius: 9999px;
+    /* Transparent border + padding-box clip insets the thumb so it reads thin. */
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  :where([data-slot='message-list'], [data-slot='emoji-scroll']):hover::-webkit-scrollbar-thumb,
+  :where([data-slot='message-list'], [data-slot='emoji-scroll'])::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--lch-text) 38%, transparent);
+  }
+}
+
+/* Mobile / touch: scroll freely but hide the bar entirely, like Messenger,
+ * WhatsApp and Telegram. Momentum scrolling is preserved. */
+@media (pointer: coarse) {
+  :where([data-slot='message-list'], [data-slot='emoji-scroll']) {
+    scrollbar-width: none;
+  }
+  :where([data-slot='message-list'], [data-slot='emoji-scroll'])::-webkit-scrollbar {
+    display: none;
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@livechat-hub/tsconfig",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "base.json",
+    "react-library.json",
+    "vite-app.json",
+    "node.json"
+  ]
+}

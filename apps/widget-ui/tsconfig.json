@@ -1,0 +1,7 @@
+{
+  "extends": "@livechat-hub/tsconfig/vite-app.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src", "vite.config.ts", "mock-agent.ts"]
+}

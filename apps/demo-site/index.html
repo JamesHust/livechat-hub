@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Acme Inc. — LiveChat Hub Integration Demo</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body
+    class="min-h-screen bg-gradient-to-br from-indigo-300 via-violet-200 to-sky-200 text-slate-800"
+  >
+    <main class="mx-auto max-w-3xl px-6 py-16">
+      <p class="text-sm font-semibold uppercase tracking-widest text-indigo-600">Acme Inc.</p>
+      <h1 class="mt-2 text-4xl font-bold tracking-tight">Partner website</h1>
+      <p class="mt-4 text-lg text-slate-600">
+        This page simulates a third-party site embedding LiveChat Hub via the SDK. The widget
+        below runs inside a Shadow DOM and streams AG-UI events from a mock backend.
+      </p>
+
+      <div class="mt-8 flex flex-wrap gap-3">
+        <button
+          id="open"
+          class="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700"
+        >
+          Open chat
+        </button>
+        <button
+          id="theme"
+          class="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
+        >
+          Toggle theme
+        </button>
+        <button
+          id="send"
+          class="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
+        >
+          Send "weather?"
+        </button>
+      </div>
+
+      <pre
+        id="log"
+        class="mt-8 h-48 overflow-auto rounded-lg bg-slate-900 p-4 font-mono text-xs text-emerald-300"
+      ></pre>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
