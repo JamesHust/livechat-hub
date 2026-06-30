@@ -42,7 +42,8 @@ export function Composer() {
   const { roomy, actionButton, actionIcon } = useControlSize();
 
   const isRunning = status === 'running';
-  const isBusy = isRunning || preparing;
+  // A paused (interrupted) turn locks input until the user answers the prompt.
+  const isBusy = isRunning || preparing || status === 'interrupted';
   const canSend = !isBusy && (value.trim().length > 0 || attachments.length > 0);
 
   const submit = async (e?: FormEvent) => {

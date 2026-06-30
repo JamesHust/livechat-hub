@@ -23,11 +23,17 @@ import {
   type UploadFn,
 } from '@livechat-hub/shared';
 import { applyThemeToElement, resolveTheme } from '@livechat-hub/themes';
-import { resolveRenderers, type RendererMap } from '@livechat-hub/renderers';
+import {
+  resolveRenderers,
+  type GenerativeComponentMap,
+  type RendererMap,
+} from '@livechat-hub/renderers';
 
 export interface ChatContextValue {
   store: StoreApi<ChatStore>;
   renderers: Required<RendererMap>;
+  /** Host-registered generative-UI components, keyed by name (may be empty). */
+  components: GenerativeComponentMap;
   t: (key: StringKey) => string;
   /** The active UI locale. */
   locale: Locale;
@@ -80,6 +86,8 @@ export interface ChatProviderProps {
   store: StoreApi<ChatStore>;
   /** Optional renderer overrides merged over the defaults. */
   renderers?: RendererMap;
+  /** Generative-UI components the agent may render by name (`canvas` parts). */
+  components?: GenerativeComponentMap;
   /** Initial locale; a persisted user choice takes precedence over it. */
   locale?: Locale;
   /** Initial color scheme; a persisted user choice takes precedence over it. */
@@ -96,6 +104,7 @@ export interface ChatProviderProps {
 export function ChatProvider({
   store,
   renderers,
+  components,
   locale: initialLocale = 'en',
   themeMode: initialThemeMode = 'auto',
   themeOverrides,
@@ -144,12 +153,14 @@ export function ChatProvider({
   }, [themeMode, themeOverrides]);
 
   const resolvedRenderers = useMemo(() => resolveRenderers(renderers), [renderers]);
+  const resolvedComponents = useMemo<GenerativeComponentMap>(() => components ?? {}, [components]);
   const t = useMemo(() => createTranslator(locale, strings), [locale, strings]);
 
   const value = useMemo<ChatContextValue>(
     () => ({
       store,
       renderers: resolvedRenderers,
+      components: resolvedComponents,
       t,
       locale,
       setLocale,
@@ -157,7 +168,17 @@ export function ChatProvider({
       setThemeMode,
       uploadFile,
     }),
-    [store, resolvedRenderers, t, locale, setLocale, themeMode, setThemeMode, uploadFile],
+    [
+      store,
+      resolvedRenderers,
+      resolvedComponents,
+      t,
+      locale,
+      setLocale,
+      themeMode,
+      setThemeMode,
+      uploadFile,
+    ],
   );
 
   return (

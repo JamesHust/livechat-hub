@@ -55,13 +55,17 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
     }
     send({ type: 'TOOL_CALL_END', toolCallId });
     await sleep(200);
+    const weather = { city: 'Hanoi', tempC: 31, condition: 'Sunny' };
     send({
       type: 'TOOL_CALL_RESULT',
       messageId,
       toolCallId,
       toolName: 'get_weather',
-      result: { city: 'Hanoi', tempC: 31, condition: 'Sunny' },
+      result: weather,
     });
+    // Shared state (agent → UI): publish the last looked-up city. A frontend
+    // `useCoAgentState()` reader sees this and can write back for the next run.
+    send({ type: 'STATE_SNAPSHOT', snapshot: { lastCity: weather.city } });
     await sleep(200);
   }
 
@@ -72,6 +76,18 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
     await sleep(45);
   }
   send({ type: 'TEXT_MESSAGE_END', messageId });
+
+  // Generative UI: render a host-registered component by name instead of (just)
+  // text. The widget maps 'weather-card' → the React component in main.tsx.
+  if (/weather/i.test(prompt)) {
+    send({
+      type: 'CUSTOM_UI',
+      messageId,
+      component: 'weather-card',
+      props: { city: 'Hanoi', tempC: 31, condition: 'Sunny' },
+    });
+  }
+
   send({ type: 'RUN_FINISHED', runId });
   res.end();
 }

@@ -48,4 +48,10 @@ export const ja: Dictionary = {
   'state.emptyTitle': 'どのようなご用件でしょうか？',
   'state.empty': 'メッセージを送信して会話を始めましょう。',
   'state.retry': '再試行',
+  'interrupt.title': '確認が必要です',
+  'interrupt.defaultMessage': '続行するにはあなたの確認が必要です。',
+  'interrupt.approve': '承認',
+  'interrupt.reject': '拒否',
+  'interrupt.inputPlaceholder': '返答を入力…',
+  'interrupt.submit': '送信',
 };

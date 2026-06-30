@@ -24,7 +24,28 @@ export function mockAgentPlugin(path = '/agent/run'): Plugin {
 }
 
 interface RunBody {
-  messages?: Array<{ role: string; parts?: Array<{ type: string; text?: string }> }>;
+  messages?: Array<{
+    role: string;
+    parts?: Array<{ type: string; text?: string; toolName?: string }>;
+  }>;
+  tools?: Array<{ name: string }>;
+  resume?: Array<{ id: string; value?: unknown }>;
+}
+
+/** Has the browser already executed (returned a result for) the named tool? */
+function hasToolResult(body: RunBody, toolName: string): boolean {
+  return (body.messages ?? []).some((m) =>
+    m.parts?.some((p) => p.type === 'tool-result' && p.toolName === toolName),
+  );
+}
+
+/** Did the user approve the interrupt resolution? */
+function isApproved(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { approved?: unknown }).approved === true
+  );
 }
 
 async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> {
@@ -44,6 +65,76 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
 
   send({ type: 'RUN_STARTED', runId });
   await sleep(250);
+
+  // Human-in-the-loop: a resumed run carries the user's interrupt resolution.
+  // Respond based on whether they approved.
+  if (body.resume?.length) {
+    const approved = body.resume.some((r) => isApproved(r.value));
+    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
+    const reply = approved
+      ? 'Done — the file has been deleted (pretend!). ✅'
+      : 'No problem — I left everything as is.';
+    for (const word of reply.split(' ')) {
+      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
+      await sleep(45);
+    }
+    send({ type: 'TEXT_MESSAGE_END', messageId });
+    send({ type: 'RUN_FINISHED', runId });
+    res.end();
+    return;
+  }
+
+  // Human-in-the-loop trigger: a destructive request pauses for approval. The
+  // run finishes with an `interrupt` outcome; the widget shows accept/reject and
+  // resumes the run (handled above) with the user's choice.
+  if (/delete|remove|wipe/i.test(prompt)) {
+    send({
+      type: 'RUN_FINISHED',
+      runId,
+      outcome: {
+        type: 'interrupt',
+        interrupts: [
+          {
+            id: `int_${Date.now()}`,
+            kind: 'approval',
+            message: 'Deleting report.pdf is permanent. Do you want me to proceed?',
+            value: { action: 'delete_file', path: '/demo/report.pdf' },
+          },
+        ],
+      },
+    });
+    res.end();
+    return;
+  }
+
+  // Frontend tool hand-off: when asked about the page background, call the
+  // browser-side `set_page_background` tool and finish WITHOUT a result. The
+  // client executes the handler and starts a follow-up run carrying the result,
+  // which lands in the `else` branch below to confirm.
+  if (/background|backdrop/i.test(prompt)) {
+    if (!hasToolResult(body, 'set_page_background')) {
+      const toolCallId = `call_${Date.now()}`;
+      send({ type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'set_page_background' });
+      // Arbitrary demo color for the host page — not a widget theme token.
+      for (const chunk of ['{"color":', '"#0f766e"}']) {
+        send({ type: 'TOOL_CALL_ARGS', toolCallId, delta: chunk });
+        await sleep(120);
+      }
+      send({ type: 'TOOL_CALL_END', toolCallId });
+      send({ type: 'RUN_FINISHED', runId });
+      res.end();
+      return;
+    }
+    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
+    for (const word of 'Done — I updated the page background for you. ✨'.split(' ')) {
+      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
+      await sleep(45);
+    }
+    send({ type: 'TEXT_MESSAGE_END', messageId });
+    send({ type: 'RUN_FINISHED', runId });
+    res.end();
+    return;
+  }
 
   // Demonstrate a tool-call lifecycle when the user mentions "weather".
   if (/weather/i.test(prompt)) {
@@ -85,7 +176,9 @@ function buildReply(prompt: string): string {
     `You said: _"${prompt}"_.\n\n` +
     'This is a **mock** AG-UI stream proving the end-to-end vertical slice: ' +
     'SDK → Shadow DOM → core store → renderers → UI. Try asking about the ' +
-    '`weather` to see a tool-call rendered.'
+    '`weather` (backend tool-call), ask me to **change the background** (a ' +
+    '_frontend_ tool in your browser), or ask me to **delete a file** (a ' +
+    'human-in-the-loop approval step).'
   );
 }
 

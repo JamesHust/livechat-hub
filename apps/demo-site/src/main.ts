@@ -1,6 +1,12 @@
 import LiveChatHub from '@livechat-hub/sdk';
 import './styles.css';
 
+const log = document.getElementById('log')!;
+const line = (msg: string) => {
+  log.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
+  log.scrollTop = log.scrollHeight;
+};
+
 // This is exactly what a partner integration looks like — no React, no build
 // knowledge of the internals; just the public SDK contract.
 const widget = LiveChatHub.init({
@@ -9,13 +15,27 @@ const widget = LiveChatHub.init({
   theme: 'default',
   locale: 'en',
   defaultOpen: true,
+  // Frontend tools: the agent can act on THIS page, not just reply. Ask the
+  // widget to "change the background" to see the agent call this in the browser.
+  actions: [
+    {
+      name: 'set_page_background',
+      description: 'Change the demo page background color. Args: { color: CSS color string }',
+      parameters: {
+        type: 'object',
+        properties: { color: { type: 'string', description: 'Any CSS color' } },
+        required: ['color'],
+      },
+      handler: ({ color }) => {
+        document.body.style.backgroundColor = String(color);
+        line(`frontend action → set_page_background(${String(color)})`);
+        return { ok: true, applied: color };
+      },
+    },
+  ],
+  // Live context the agent receives on every run (an AG-UI "readable").
+  context: [{ description: 'The demo page title', get: () => document.title }],
 });
-
-const log = document.getElementById('log')!;
-const line = (msg: string) => {
-  log.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
-  log.scrollTop = log.scrollHeight;
-};
 
 widget.on('ready', () => line('widget ready'));
 widget.on('open', () => line('panel opened'));

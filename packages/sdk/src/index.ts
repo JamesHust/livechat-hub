@@ -3,6 +3,12 @@ import { mountWidget, type MountOptions, type WidgetInstance } from './mount';
 export type { MountOptions, WidgetInstance };
 export type { WidgetEvents, EventName } from './emitter';
 export type { LiveChatConfig } from '@livechat-hub/shared';
+export type { FrontendAction, FrontendActionHandler, ContextProvider } from '@livechat-hub/core';
+export type {
+  GenerativeComponent,
+  GenerativeComponentProps,
+  GenerativeComponentMap,
+} from '@livechat-hub/renderers';
 
 /**
  * Public SDK surface. Designed so consumers need zero React knowledge:

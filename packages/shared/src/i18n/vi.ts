@@ -48,4 +48,10 @@ export const vi: Dictionary = {
   'state.emptyTitle': 'Chúng tôi có thể giúp gì cho bạn?',
   'state.empty': 'Bắt đầu cuộc trò chuyện bằng cách gửi tin nhắn.',
   'state.retry': 'Thử lại',
+  'interrupt.title': 'Cần xác nhận',
+  'interrupt.defaultMessage': 'Trợ lý cần bạn xác nhận để tiếp tục.',
+  'interrupt.approve': 'Chấp nhận',
+  'interrupt.reject': 'Từ chối',
+  'interrupt.inputPlaceholder': 'Nhập phản hồi của bạn…',
+  'interrupt.submit': 'Gửi',
 };

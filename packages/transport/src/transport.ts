@@ -1,5 +1,10 @@
 import { DEFAULT_RUN_PATH } from '@livechat-hub/shared';
-import type { UIMessage } from '@livechat-hub/shared';
+import type {
+  ContextItem,
+  FrontendTool,
+  InterruptResolution,
+  UIMessage,
+} from '@livechat-hub/shared';
 import type { AgUiEvent } from './events';
 import { parseSseStream } from './sse';
 import { parseEvent } from './validate';
@@ -11,6 +16,25 @@ export interface RunInput {
   messages: UIMessage[];
   userId?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Frontend tools the agent may call in the browser. The backend emits a
+   * `TOOL_CALL_*` for one of these and finishes without a result; the client
+   * executes the handler and starts a follow-up run carrying the result.
+   */
+  tools?: FrontendTool[];
+  /** Live context the host page provides to the agent for this run. */
+  context?: ContextItem[];
+  /**
+   * Resolutions to open interrupts, resuming a previously paused (interrupted)
+   * run. Each entry addresses one `RunInterrupt` by id.
+   */
+  resume?: InterruptResolution[];
+  /**
+   * Shared agent state owned/edited by the frontend, forwarded so the agent
+   * sees the client's latest view. The agent mirrors changes back via
+   * `STATE_SNAPSHOT` / `STATE_DELTA`.
+   */
+  state?: Record<string, unknown>;
 }
 
 export interface RunOptions {

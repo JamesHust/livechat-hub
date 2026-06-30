@@ -69,7 +69,10 @@ export function applyEventToMessages(messages: UIMessage[], event: AgUiEvent): U
       ]);
 
     case AgUiEventType.CustomUi:
-      return updateMessage(messages, event.messageId ?? 'assistant', 'assistant', (parts) => [
+      // Needs a target message to attach to; drop if unaddressed (mirrors the
+      // other events, which leave the list unchanged when they can't be placed).
+      if (!event.messageId) return messages;
+      return updateMessage(messages, event.messageId, 'assistant', (parts) => [
         ...parts,
         { type: 'canvas', component: event.component, props: event.props } satisfies CanvasPart,
       ]);

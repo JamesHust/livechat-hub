@@ -16,3 +16,10 @@ export {
   type WidgetLayout,
   type WidgetLayoutProviderProps,
 } from './hooks/use-widget-layout';
+export { useFrontendAction, useFrontendContext } from './hooks/use-frontend-action';
+export { useCoAgentState } from './hooks/use-co-agent';
+export type {
+  GenerativeComponent,
+  GenerativeComponentProps,
+  GenerativeComponentMap,
+} from '@livechat-hub/renderers';

@@ -1,5 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client';
-import { createChatStore } from '@livechat-hub/core';
+import { createChatStore, type ContextProvider, type FrontendAction } from '@livechat-hub/core';
 import { createSseTransport } from '@livechat-hub/transport';
 import { applyThemeToElement, resolveTheme } from '@livechat-hub/themes';
 import { ChatProvider } from '@livechat-hub/ui';
@@ -10,7 +10,7 @@ import {
   type ThemeMode,
   type ThemeOverrides,
 } from '@livechat-hub/shared';
-import type { RendererMap } from '@livechat-hub/renderers';
+import type { GenerativeComponentMap, RendererMap } from '@livechat-hub/renderers';
 // `?inline` makes Vite return the compiled stylesheet as a string so we can
 // inject it into the Shadow DOM instead of the document head. This is the
 // Tailwind v4 + shadcn entry, compiled by `@tailwindcss/vite` at build time.
@@ -21,8 +21,14 @@ import { Emitter } from './emitter';
 export interface MountOptions extends LiveChatConfig {
   /** Renderer overrides forwarded to the UI layer. */
   renderers?: RendererMap;
+  /** Generative-UI components the agent may render by name (`canvas` parts). */
+  components?: GenerativeComponentMap;
   /** Existing element to host the widget; defaults to a new <div> on body. */
   target?: HTMLElement;
+  /** Frontend tools the agent may invoke in the browser, registered at mount. */
+  actions?: FrontendAction[];
+  /** Live host-page context providers forwarded to the agent on every run. */
+  context?: ContextProvider[];
 }
 
 export interface WidgetInstance {
@@ -32,6 +38,13 @@ export interface WidgetInstance {
   isOpen(): boolean;
   sendMessage(text: string): void;
   setTheme(theme: 'default' | 'dark' | 'auto', overrides?: ThemeOverrides): void;
+  /**
+   * Register a frontend tool the agent can call in the browser. Returns an
+   * unregister function.
+   */
+  registerAction(action: FrontendAction): () => void;
+  /** Register a live host-page context provider. Returns an unregister function. */
+  registerContext(provider: ContextProvider): () => void;
   destroy(): void;
   on: Emitter['on'];
   off: Emitter['off'];
@@ -91,6 +104,11 @@ export function mountWidget(options: MountOptions): WidgetInstance {
     userId: options.userId,
   });
 
+  // Register frontend tools / context declared up front. Unregister functions
+  // are dropped here — `destroy()` tears the whole store down anyway.
+  options.actions?.forEach((action) => store.getState().registerAction(action));
+  options.context?.forEach((provider) => store.getState().registerContext(provider));
+
   // 5. Bridge store changes to public events.
   let lastStatus: RunStatus = 'idle';
   let lastCount = store.getState().messages.length;
@@ -118,6 +136,7 @@ export function mountWidget(options: MountOptions): WidgetInstance {
       <ChatProvider
         store={store}
         renderers={options.renderers}
+        components={options.components}
         locale={options.locale ?? 'en'}
         themeMode={initialThemeMode(options)}
         themeOverrides={options.themeOverrides}
@@ -151,6 +170,8 @@ export function mountWidget(options: MountOptions): WidgetInstance {
     isOpen: () => open,
     sendMessage: (text) => void store.getState().sendMessage(text),
     setTheme: applyTheme,
+    registerAction: (action) => store.getState().registerAction(action),
+    registerContext: (provider) => store.getState().registerContext(provider),
     on: emitter.on.bind(emitter),
     off: emitter.off.bind(emitter),
     destroy: () => {

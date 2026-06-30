@@ -14,8 +14,27 @@ export function validateEvent(value: unknown): value is AgUiEvent {
 
   switch (e.type as AgUiEvent['type']) {
     case AgUiEventType.RunStarted:
-    case AgUiEventType.RunFinished:
       return typeof e.runId === 'string';
+    case AgUiEventType.RunFinished: {
+      if (typeof e.runId !== 'string') return false;
+      if (e.outcome === undefined) return true;
+      if (typeof e.outcome !== 'object' || e.outcome === null) return false;
+      const outcome = e.outcome as Record<string, unknown>;
+      // An interrupt outcome must carry at least one interrupt with a string id.
+      if (outcome.type === 'interrupt') {
+        return (
+          Array.isArray(outcome.interrupts) &&
+          outcome.interrupts.length > 0 &&
+          outcome.interrupts.every(
+            (i) =>
+              typeof i === 'object' &&
+              i !== null &&
+              typeof (i as Record<string, unknown>).id === 'string',
+          )
+        );
+      }
+      return true;
+    }
     case AgUiEventType.RunError:
       return typeof e.message === 'string';
     case AgUiEventType.TextMessageStart:

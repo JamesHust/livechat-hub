@@ -48,4 +48,10 @@ export const zh: Dictionary = {
   'state.emptyTitle': '有什么可以帮您？',
   'state.empty': '发送消息以开始对话。',
   'state.retry': '重试',
+  'interrupt.title': '需要确认',
+  'interrupt.defaultMessage': '助手需要您的确认才能继续。',
+  'interrupt.approve': '批准',
+  'interrupt.reject': '拒绝',
+  'interrupt.inputPlaceholder': '输入您的回复…',
+  'interrupt.submit': '发送',
 };

@@ -46,6 +46,12 @@ export const en = {
   'state.emptyTitle': 'How can we help?',
   'state.empty': 'Start the conversation by sending a message.',
   'state.retry': 'Retry',
+  'interrupt.title': 'Action needed',
+  'interrupt.defaultMessage': 'The assistant needs your confirmation to continue.',
+  'interrupt.approve': 'Approve',
+  'interrupt.reject': 'Reject',
+  'interrupt.inputPlaceholder': 'Type your response…',
+  'interrupt.submit': 'Send',
 } as const;
 
 export type StringKey = keyof typeof en;

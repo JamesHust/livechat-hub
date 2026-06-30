@@ -3,6 +3,7 @@ import { LazyMotion, m, useReducedMotion } from 'framer-motion';
 import { Header } from './Header';
 import { MessageList } from './MessageList';
 import { ErrorBar } from './ErrorBar';
+import { InterruptPrompt } from './InterruptPrompt';
 import { Composer } from './Composer';
 import { WelcomeScreen } from './WelcomeScreen';
 import { useChatStore } from '../context';
@@ -88,6 +89,7 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
           <>
             <MessageList />
             <ErrorBar />
+            <InterruptPrompt />
             <Composer />
           </>
         )}

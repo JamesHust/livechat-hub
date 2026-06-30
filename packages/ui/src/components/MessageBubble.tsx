@@ -12,7 +12,7 @@ export interface MessageBubbleProps {
 }
 
 export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
-  const { renderers, t } = useChatContext();
+  const { renderers, components, t } = useChatContext();
   const reduced = useReducedMotion() ?? false;
   if (message.parts.length === 0 && !isStreaming) return null;
 
@@ -47,7 +47,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
             <PartView
               key={index}
               part={part}
-              context={{ message, isStreaming, t }}
+              context={{ message, isStreaming, t, components }}
               renderers={renderers}
             />
           ))}

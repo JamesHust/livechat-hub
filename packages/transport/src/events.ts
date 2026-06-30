@@ -7,6 +7,8 @@
  * with AG-UI-aligned concepts only.
  */
 
+import type { RunInterrupt } from '@livechat-hub/shared';
+
 export const AgUiEventType = {
   RunStarted: 'RUN_STARTED',
   RunFinished: 'RUN_FINISHED',
@@ -45,8 +47,17 @@ export interface RunStartedEvent extends BaseEvent<typeof AgUiEventType.RunStart
   threadId?: string;
 }
 
+/**
+ * Outcome of a finished run. `'success'` (the default when omitted) ends the
+ * turn; `'interrupt'` pauses it for human input — the client resumes with a new
+ * run carrying `RunInput.resume`.
+ */
+export type RunOutcome = { type: 'success' } | { type: 'interrupt'; interrupts: RunInterrupt[] };
+
 export interface RunFinishedEvent extends BaseEvent<typeof AgUiEventType.RunFinished> {
   runId: string;
+  /** Present when the run paused for human-in-the-loop; absent means success. */
+  outcome?: RunOutcome;
 }
 
 export interface RunErrorEvent extends BaseEvent<typeof AgUiEventType.RunError> {

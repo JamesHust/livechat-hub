@@ -48,4 +48,10 @@ export const id: Dictionary = {
   'state.emptyTitle': 'Ada yang bisa kami bantu?',
   'state.empty': 'Mulai percakapan dengan mengirim pesan.',
   'state.retry': 'Coba lagi',
+  'interrupt.title': 'Perlu konfirmasi',
+  'interrupt.defaultMessage': 'Asisten memerlukan konfirmasi Anda untuk melanjutkan.',
+  'interrupt.approve': 'Setujui',
+  'interrupt.reject': 'Tolak',
+  'interrupt.inputPlaceholder': 'Ketik tanggapan Anda…',
+  'interrupt.submit': 'Kirim',
 };

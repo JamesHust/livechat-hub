@@ -36,6 +36,34 @@ describe('validateEvent', () => {
   it('rejects events missing required fields', () => {
     expect(validateEvent({ type: AgUiEventType.TextMessageContent, messageId: 'm1' })).toBe(false);
   });
+
+  it('accepts RUN_FINISHED with no outcome and with a valid interrupt outcome', () => {
+    expect(validateEvent({ type: AgUiEventType.RunFinished, runId: 'r1' })).toBe(true);
+    expect(
+      validateEvent({
+        type: AgUiEventType.RunFinished,
+        runId: 'r1',
+        outcome: { type: 'interrupt', interrupts: [{ id: 'i1', kind: 'approval' }] },
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a RUN_FINISHED interrupt outcome that is empty or missing ids', () => {
+    expect(
+      validateEvent({
+        type: AgUiEventType.RunFinished,
+        runId: 'r1',
+        outcome: { type: 'interrupt', interrupts: [] },
+      }),
+    ).toBe(false);
+    expect(
+      validateEvent({
+        type: AgUiEventType.RunFinished,
+        runId: 'r1',
+        outcome: { type: 'interrupt', interrupts: [{ kind: 'approval' }] },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('parseEvent', () => {

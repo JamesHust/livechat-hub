@@ -140,10 +140,21 @@ export function ReferenceRenderer({ part }: RendererProps<ReferencePart>) {
 }
 
 /**
- * Fallback canvas / generative-UI renderer. Real apps override this via the
- * renderer map to mount their own components keyed by `part.component`.
+ * Canvas / generative-UI renderer. Looks the part's `component` name up in the
+ * host-registered generative component map (`context.components`) and renders
+ * the match with the model-supplied props. Falls back to a labelled JSON view
+ * when no component is registered for the name — so unknown components degrade
+ * gracefully instead of vanishing.
  */
-export function CanvasRenderer({ part }: RendererProps<CanvasPart>) {
+export function CanvasRenderer({ part, context }: RendererProps<CanvasPart>) {
+  const Component = context.components?.[part.component];
+  if (Component) {
+    return (
+      <div className="lch-part lch-canvas">
+        <Component props={part.props} context={context} />
+      </div>
+    );
+  }
   return (
     <div className="lch-part lch-canvas">
       <div className="lch-tool__head">
