@@ -40,3 +40,6 @@ pnpm-debug.log*
 apps/extension/dist/
 *.crx
 *.pem
+
+# Internal planning docs (kept local, not pushed)
+docs/ROADMAP.md

@@ -1,4 +1,27 @@
-# LiveChat Hub
+<div align="center">
+
+<img src=".github/assets/banner.svg" alt="LiveChat Hub — the AI-provider-agnostic live chat frontend platform" width="100%" />
+
+<p>
+  <a href="https://github.com/JamesHust/livechat-hub/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/JamesHust/livechat-hub/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI&color=1856FF"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-1856FF?style=flat-square">
+  <img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-149ECA?style=flat-square&logo=react&logoColor=white">
+  <img alt="pnpm workspaces" src="https://img.shields.io/badge/pnpm-workspaces-F69220?style=flat-square&logo=pnpm&logoColor=white">
+  <img alt="Turborepo" src="https://img.shields.io/badge/Turborepo-monorepo-EF4444?style=flat-square&logo=turborepo&logoColor=white">
+  <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-07CA6B?style=flat-square">
+</p>
+
+<p>
+  <a href="#getting-started"><b>Getting Started</b></a> ·
+  <a href="#architecture-in-one-diagram"><b>Architecture</b></a> ·
+  <a href="#embedding-production"><b>Embedding</b></a> ·
+  <a href="docs/BACKEND.md"><b>Backend Contract</b></a>
+</p>
+
+</div>
+
+---
 
 A production-ready, **AI-provider-agnostic** live chat frontend platform. The UI
 talks to the backend only through an **AG-UI compatible event protocol** and a
