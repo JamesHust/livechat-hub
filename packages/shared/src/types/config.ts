@@ -76,6 +76,12 @@ export interface LiveChatConfig {
   /** Greeting / placeholder copy overrides. */
   strings?: Partial<Record<string, string>>;
   /**
+   * Suggested prompts (quick replies) shown on the empty state; clicking one
+   * sends it. Follow-up suggestions after an answer come from the agent via
+   * shared state, independent of this list.
+   */
+  suggestions?: string[];
+  /**
    * Resolves user attachments to fetchable URLs. Omit to inline files as
    * `data:` URLs (no upload backend required).
    */

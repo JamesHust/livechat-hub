@@ -148,6 +148,8 @@ export function mountWidget(options: MountOptions): WidgetInstance {
         themeOverrides={options.themeOverrides}
         strings={options.strings}
         uploadFile={options.uploadFile}
+        suggestions={options.suggestions}
+        onFeedback={(messageId, value) => emitter.emit('feedback', { messageId, value })}
       >
         <WidgetShell
           open={open}

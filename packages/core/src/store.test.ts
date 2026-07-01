@@ -6,6 +6,16 @@ import {
   type Transport,
 } from '@livechat-hub/transport';
 import { createChatStore } from './store';
+import { memoryStorage } from './persistence';
+
+/** A complete, streamed assistant turn used across the send-status tests. */
+const OK_RUN: AgUiEvent[] = [
+  { type: AgUiEventType.RunStarted, runId: 'r1' },
+  { type: AgUiEventType.TextMessageStart, messageId: 'a1', role: 'assistant' },
+  { type: AgUiEventType.TextMessageContent, messageId: 'a1', delta: 'Hi' },
+  { type: AgUiEventType.TextMessageEnd, messageId: 'a1' },
+  { type: AgUiEventType.RunFinished, runId: 'r1' },
+];
 
 function fakeTransport(events: AgUiEvent[]): Transport {
   return {
@@ -360,5 +370,104 @@ describe('createChatStore', () => {
     await store.getState().sendMessage('hi');
     expect(store.getState().run.status).toBe('failed');
     expect(store.getState().run.error?.message).toBe('boom');
+  });
+
+  it('stamps createdAt and marks a delivered message sent', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('hi');
+
+    const [user, assistant] = store.getState().messages;
+    expect(typeof user?.metadata?.createdAt).toBe('number');
+    expect(typeof assistant?.metadata?.createdAt).toBe('number');
+    // RUN_STARTED reached the backend → the user message is delivered.
+    expect(user?.metadata?.status).toBe('sent');
+  });
+
+  it('marks a message failed when the run never reaches the backend, and resends it', async () => {
+    // First attempt throws before any event (offline); the second succeeds.
+    let attempt = 0;
+    const transport: Transport = {
+      async *run() {
+        if (attempt++ === 0) throw new Error('network down');
+        for (const e of OK_RUN) yield e;
+      },
+    };
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hello');
+
+    const userId = store.getState().messages[0]!.id;
+    expect(store.getState().messages[0]?.metadata?.status).toBe('failed');
+    expect(store.getState().run.status).toBe('failed');
+
+    await store.getState().retryMessage(userId);
+    expect(store.getState().messages[0]?.metadata?.status).toBe('sent');
+    expect(store.getState().run.status).toBe('completed');
+  });
+
+  it('regenerate drops the last answer and re-runs from the last user message', async () => {
+    const { transport } = scriptedTransport([
+      [
+        { type: AgUiEventType.RunStarted, runId: 'r1' },
+        { type: AgUiEventType.TextMessageStart, messageId: 'a1', role: 'assistant' },
+        { type: AgUiEventType.TextMessageContent, messageId: 'a1', delta: 'First' },
+        { type: AgUiEventType.TextMessageEnd, messageId: 'a1' },
+        { type: AgUiEventType.RunFinished, runId: 'r1' },
+      ],
+      [
+        { type: AgUiEventType.RunStarted, runId: 'r2' },
+        { type: AgUiEventType.TextMessageStart, messageId: 'a2', role: 'assistant' },
+        { type: AgUiEventType.TextMessageContent, messageId: 'a2', delta: 'Second' },
+        { type: AgUiEventType.TextMessageEnd, messageId: 'a2' },
+        { type: AgUiEventType.RunFinished, runId: 'r2' },
+      ],
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hi');
+    expect(store.getState().messages[1]?.id).toBe('a1');
+
+    await store.getState().regenerate();
+    const { messages } = store.getState();
+    // Old answer (a1) is gone, replaced by the regenerated one (a2).
+    expect(messages).toHaveLength(2);
+    expect(messages[1]?.id).toBe('a2');
+    expect(messages.some((m) => m.id === 'a1')).toBe(false);
+  });
+
+  it('toggles assistant feedback on the message metadata', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('hi');
+
+    store.getState().setFeedback('a1', 'up');
+    expect(store.getState().messages.find((m) => m.id === 'a1')?.metadata?.feedback).toBe('up');
+    // Clicking the active rating clears it.
+    store.getState().setFeedback('a1', 'up');
+    expect(
+      store.getState().messages.find((m) => m.id === 'a1')?.metadata?.feedback,
+    ).toBeUndefined();
+    // Switching to the other rating replaces it.
+    store.getState().setFeedback('a1', 'down');
+    expect(store.getState().messages.find((m) => m.id === 'a1')?.metadata?.feedback).toBe('down');
+  });
+
+  it('persists the composer draft across store instances via the storage adapter', () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport([]), tenantId: 't1', storage });
+    store.getState().saveDraft('half-typed message');
+    expect(store.getState().loadDraft()).toBe('half-typed message');
+
+    // A fresh store (reload) rehydrates the draft from the same storage.
+    const reopened = createChatStore({ transport: fakeTransport([]), tenantId: 't1', storage });
+    expect(reopened.getState().loadDraft()).toBe('half-typed message');
+
+    reopened.getState().saveDraft('');
+    expect(reopened.getState().loadDraft()).toBe('');
   });
 });

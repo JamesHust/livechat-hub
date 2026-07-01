@@ -9,6 +9,17 @@
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
+/**
+ * Delivery lifecycle of a user message. `'sending'` until the run reaches the
+ * backend, `'sent'` once it does, `'failed'` only when it never got there (e.g.
+ * offline) so the UI can offer a per-message resend. Run-level failures after
+ * delivery are surfaced by the error bar, not by flipping this back to failed.
+ */
+export type MessageStatus = 'sending' | 'sent' | 'failed';
+
+/** End-user rating of an assistant answer (thumbs up / down). */
+export type MessageFeedback = 'up' | 'down';
+
 /** Lifecycle of a streamed tool invocation. */
 export type ToolCallState = 'partial' | 'input-available' | 'output-available' | 'error';
 
@@ -131,12 +142,27 @@ export type MessagePart =
 
 export type MessagePartType = MessagePart['type'];
 
+/**
+ * Provider-agnostic message metadata. Known fields are typed; the open index
+ * signature keeps it a superset of the previous `Record<string, unknown>` so
+ * arbitrary host/agent annotations still ride along.
+ */
+export interface MessageMetadata {
+  /** Client clock (epoch ms) when the message was created — drives timestamp UX. */
+  createdAt?: number;
+  /** Delivery lifecycle; meaningful on user messages. See {@link MessageStatus}. */
+  status?: MessageStatus;
+  /** End-user rating of an assistant answer, when given. */
+  feedback?: MessageFeedback;
+  [key: string]: unknown;
+}
+
 export interface UIMessage {
   id: string;
   role: MessageRole;
   parts: MessagePart[];
-  /** Arbitrary, provider-agnostic metadata (timestamps, model, etc.). */
-  metadata?: Record<string, unknown>;
+  /** Arbitrary, provider-agnostic metadata (timestamps, status, model, etc.). */
+  metadata?: MessageMetadata;
 }
 
 /** Narrowing helper used across renderers and the core store. */

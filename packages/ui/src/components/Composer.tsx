@@ -31,11 +31,19 @@ function formatDuration(ms: number): string {
 export function Composer() {
   const { t, store, uploadFile } = useChatContext();
   const status = useChatStore((s) => s.run.status);
-  const [value, setValue] = useState('');
+  // Seed from the persisted draft so a half-typed message survives reload /
+  // closing the widget. Written back on every edit; cleared once sent.
+  const [value, setValue] = useState(() => store.getState().loadDraft());
   const [preparing, setPreparing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reduced = useReducedMotion() ?? false;
+
+  // Update the local value and persist it as the draft in one step.
+  const updateDraft = (next: string) => {
+    setValue(next);
+    store.getState().saveDraft(next);
+  };
 
   const { attachments, add, remove, clear } = useAttachments();
   const recorder = useVoiceRecorder();
@@ -62,7 +70,7 @@ export function Composer() {
       return;
     }
 
-    setValue('');
+    updateDraft('');
     clear();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setPreparing(false);
@@ -82,7 +90,7 @@ export function Composer() {
     const el = textareaRef.current;
     const start = el?.selectionStart ?? value.length;
     const end = el?.selectionEnd ?? value.length;
-    setValue((prev) => prev.slice(0, start) + emoji + prev.slice(end));
+    updateDraft(value.slice(0, start) + emoji + value.slice(end));
     requestAnimationFrame(() => {
       const node = textareaRef.current;
       if (!node) return;
@@ -224,7 +232,7 @@ export function Composer() {
               rows={1}
               value={value}
               onChange={(e) => {
-                setValue(e.target.value);
+                updateDraft(e.target.value);
                 e.target.style.height = 'auto';
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
               }}

@@ -3,6 +3,7 @@ export { ChatWindow, type ChatWindowProps } from './components/ChatWindow';
 export { ChatWidget, type ChatWidgetProps } from './components/ChatWidget';
 export { MessageList } from './components/MessageList';
 export { MessageBubble, type MessageBubbleProps } from './components/MessageBubble';
+export { Suggestions, type SuggestionsProps } from './components/Suggestions';
 export { Composer } from './components/Composer';
 export { EmojiPicker, type EmojiPickerProps } from './components/EmojiPicker';
 export { Header, type HeaderProps } from './components/Header';
