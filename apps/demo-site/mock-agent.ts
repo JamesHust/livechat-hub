@@ -166,8 +166,19 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
     await sleep(45);
   }
   send({ type: 'TEXT_MESSAGE_END', messageId });
+  // Publish follow-up quick replies via shared state (STATE_SNAPSHOT) — the UI
+  // reads `agentState.suggestions` and renders them as chips. No custom event.
+  send({ type: 'STATE_SNAPSHOT', snapshot: { suggestions: suggestionsFor(prompt) } });
   send({ type: 'RUN_FINISHED', runId });
   res.end();
+}
+
+/** Contextual follow-up suggestions offered after an answer. */
+function suggestionsFor(prompt: string): string[] {
+  if (/weather/i.test(prompt)) {
+    return ['What about tomorrow?', 'Change the background', 'Thanks!'];
+  }
+  return ['What is the weather?', 'Change the background', 'Delete a file'];
 }
 
 function buildReply(prompt: string): string {

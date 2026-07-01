@@ -1,4 +1,4 @@
-import type { RunStatus, UIMessage } from '@livechat-hub/shared';
+import type { MessageFeedback, RunStatus, UIMessage } from '@livechat-hub/shared';
 
 /** Public lifecycle events the host application can subscribe to. */
 export interface WidgetEvents {
@@ -9,6 +9,8 @@ export interface WidgetEvents {
   message: UIMessage;
   'run:status': RunStatus;
   error: { message: string };
+  /** The end-user rated an answer; `value` is `null` when a rating was cleared. */
+  feedback: { messageId: string; value: MessageFeedback | null };
 }
 
 export type EventName = keyof WidgetEvents;

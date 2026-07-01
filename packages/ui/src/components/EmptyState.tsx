@@ -2,6 +2,7 @@ import { m, useReducedMotion } from 'framer-motion';
 import { useChatContext } from '../context';
 import { ITEM_TRANSITION } from '../lib/motion';
 import { AgentAvatar } from './AgentAvatar';
+import { Suggestions } from './Suggestions';
 
 /**
  * Spot illustration for the empty conversation box (see CLAUDE.md
@@ -11,11 +12,11 @@ import { AgentAvatar } from './AgentAvatar';
  * utilities), so it restyles live with `setTheme()`.
  */
 export function EmptyState() {
-  const { t } = useChatContext();
+  const { t, store, suggestions } = useChatContext();
   const reduced = useReducedMotion() ?? false;
   return (
     <m.div
-      className="m-auto flex max-w-[16rem] flex-col items-center gap-3 p-6 text-center"
+      className="m-auto flex max-w-[18rem] flex-col items-center gap-3 p-6 text-center"
       // Entrance only: fade/lift the first impression; instant under reduced
       // motion. No looping ambient motion — this sits idle until typed into.
       initial={reduced ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.97 }}
@@ -27,6 +28,12 @@ export function EmptyState() {
         {t('state.emptyTitle')}
       </p>
       <p className="text-muted-foreground m-0 text-sm leading-relaxed">{t('state.empty')}</p>
+      {/* Suggested prompts (quick replies) — clicking one starts the conversation. */}
+      <Suggestions
+        suggestions={suggestions}
+        onSelect={(text) => void store.getState().sendMessage(text)}
+        className="justify-center pt-1"
+      />
     </m.div>
   );
 }

@@ -2,7 +2,10 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import type {
   Artifact,
   InterruptResolution,
+  MessageFeedback,
+  MessageMetadata,
   MessagePart,
+  MessageStatus,
   RunState,
   Session,
   UIMessage,
@@ -16,6 +19,7 @@ import { resolveSession } from './session';
 import {
   defaultMessageBackend,
   defaultStorage,
+  draftKey,
   PersistenceManager,
   type MessageBackend,
   type StorageAdapter,
@@ -48,8 +52,28 @@ export interface ChatActions {
    * unless the run is currently `interrupted`. See {@link InterruptResolution}.
    */
   resume(resolutions: InterruptResolution[]): Promise<void>;
-  /** Re-run the conversation from the last user message. */
+  /** Re-run the conversation from the last user message (recover from an error). */
   retryLast(): Promise<void>;
+  /**
+   * Re-send a specific (typically failed) user message: trims everything after
+   * it and starts a fresh run. Used by the per-message resend affordance.
+   */
+  retryMessage(messageId: string): Promise<void>;
+  /**
+   * Regenerate the last assistant answer: drops it and re-runs from the last
+   * user message. Behaves like {@link retryLast} but is offered on a completed
+   * turn rather than a failed one.
+   */
+  regenerate(): Promise<void>;
+  /**
+   * Record (or toggle off) the end-user's rating of an assistant message. Stored
+   * on the message metadata and persisted; hosts observe it via the UI callback.
+   */
+  setFeedback(messageId: string, value: MessageFeedback): void;
+  /** Read the persisted composer draft (empty string when none). */
+  loadDraft(): string;
+  /** Persist the composer draft; pass an empty string to clear it. */
+  saveDraft(text: string): void;
   /** Clear all messages and persisted history (keeps the session). */
   clear(): void;
   /**
@@ -104,7 +128,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       : (() => {
           const storage = options.storage ?? defaultStorage();
           const backend = options.messageBackend ?? defaultMessageBackend(tenantId, storage);
-          return new PersistenceManager(storage, backend);
+          return new PersistenceManager(storage, backend, draftKey(tenantId));
         })();
 
   const session = persistence
@@ -134,6 +158,26 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       void persistence.persistMessages({ order: messages.map((m) => m.id), changed, removed });
     };
 
+    /** Immutably merge a metadata patch onto the message at `index`. */
+    const patchMessageMetadata = (index: number, patch: MessageMetadata) => {
+      const messages = get().messages;
+      const target = messages[index];
+      if (!target) return;
+      set({
+        messages: messages.map((m, i) =>
+          i === index ? { ...m, metadata: { ...m.metadata, ...patch } } : m,
+        ),
+      });
+    };
+
+    /** Set the delivery status of the message that triggered the current turn. */
+    const setTriggerStatus = (status: MessageStatus) => {
+      const messages = get().messages;
+      const index = findLastIndex(messages, (m) => m.role === 'user');
+      if (index === -1 || messages[index]?.metadata?.status === status) return;
+      patchMessageMetadata(index, { status });
+    };
+
     /** Stream a single backend run, folding its events into store state. */
     async function streamRun(): Promise<void> {
       abortController = new AbortController();
@@ -141,6 +185,9 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       pendingResume = null;
       // Fresh run state: drops any prior runId / open interrupts.
       set({ run: { status: 'running' } });
+      // Whether the run reached the backend this attempt — a message is only
+      // marked `failed` (offer resend) when it never got there.
+      let contacted = false;
 
       try {
         const stream = transport.run(
@@ -160,6 +207,9 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         for await (const event of stream) {
           switch (event.type) {
             case AgUiEventType.RunStarted:
+              contacted = true;
+              // The message reached the backend — it's delivered.
+              setTriggerStatus('sent');
               set({ run: { status: 'running', runId: event.runId } });
               break;
             case AgUiEventType.RunFinished: {
@@ -202,8 +252,10 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
                 },
               });
               break;
-            default:
-              set({ messages: applyEventToMessages(get().messages, event) });
+            default: {
+              const prev = get().messages;
+              set({ messages: stampNewMessages(prev, applyEventToMessages(prev, event)) });
+            }
           }
         }
 
@@ -229,6 +281,12 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
           );
           if (reconciled !== get().messages) set({ messages: reconciled });
         }
+        // Finalize the triggering message's delivery status. A failure that
+        // never reached the backend (offline) is a genuine send failure the user
+        // can resend; a failure after contact is a run error (the error bar owns
+        // retry), so the message stays `sent`.
+        if (status === 'completed' || status === 'interrupted') setTriggerStatus('sent');
+        else if (status === 'failed' && !contacted) setTriggerStatus('failed');
         persistMessages();
       }
     }
@@ -281,6 +339,23 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       }
     }
 
+    /**
+     * Re-run the turn anchored at the user message at `index`: drop everything
+     * after it, reset its status to `sending`, and stream a fresh run. Shared by
+     * `retryLast` (error recovery), `regenerate` (redo the last answer), and
+     * `retryMessage` (resend a specific failed message).
+     */
+    async function rerunFrom(index: number): Promise<void> {
+      const trimmed = get()
+        .messages.slice(0, index + 1)
+        .map((m, i) =>
+          i === index ? { ...m, metadata: { ...m.metadata, status: 'sending' as const } } : m,
+        );
+      set({ messages: trimmed });
+      persistMessages();
+      await runTurn();
+    }
+
     return {
       session,
       // Starts empty; persisted history is hydrated asynchronously below
@@ -305,7 +380,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
           id: createId('msg'),
           role: 'user',
           parts,
-          metadata: { createdAt: Date.now() },
+          metadata: { createdAt: Date.now(), status: 'sending' },
         };
         set({ messages: [...get().messages, userMessage] });
         persistMessages();
@@ -324,13 +399,48 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
       async retryLast() {
         if (get().run.status === 'running') return;
+        const index = findLastIndex(get().messages, (m) => m.role === 'user');
+        if (index === -1) return;
+        await rerunFrom(index);
+      },
+
+      async regenerate() {
+        // Regenerating discards the current answer; block while a run is live or
+        // paused on an interrupt (the user must resolve that first).
+        if (get().run.status === 'running' || get().run.status === 'interrupted') return;
+        const index = findLastIndex(get().messages, (m) => m.role === 'user');
+        if (index === -1) return;
+        await rerunFrom(index);
+      },
+
+      async retryMessage(messageId) {
+        if (get().run.status === 'running') return;
         const messages = get().messages;
-        const lastUserIndex = findLastIndex(messages, (m) => m.role === 'user');
-        if (lastUserIndex === -1) return;
-        // Drop everything after the last user message, then re-run.
-        set({ messages: messages.slice(0, lastUserIndex + 1) });
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index === -1 || messages[index]?.role !== 'user') return;
+        await rerunFrom(index);
+      },
+
+      setFeedback(messageId, value) {
+        const messages = get().messages;
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index === -1) return;
+        // Clicking the active rating clears it (toggle off).
+        const next = messages[index]?.metadata?.feedback === value ? undefined : value;
+        set({
+          messages: messages.map((m, i) =>
+            i === index ? { ...m, metadata: { ...m.metadata, feedback: next } } : m,
+          ),
+        });
         persistMessages();
-        await runTurn();
+      },
+
+      loadDraft() {
+        return persistence?.loadDraft() ?? '';
+      },
+
+      saveDraft(text) {
+        persistence?.saveDraft(text);
       },
 
       clear() {
@@ -463,6 +573,22 @@ function collectPendingFrontendCalls(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Stamp a client `createdAt` on messages the reducer just appended (assistant /
+ * system / tool turns) so every bubble can show a send time. The reducer only
+ * ever appends, so only indices past the previous length can be new — keeping
+ * this O(1) amortized on the streaming hot path (delta events don't grow the
+ * array, so they early-return). Keeps the reducer itself pure.
+ */
+function stampNewMessages(prev: UIMessage[], next: UIMessage[]): UIMessage[] {
+  if (next.length <= prev.length) return next;
+  return next.map((m, i) =>
+    i >= prev.length && m.metadata?.createdAt == null
+      ? { ...m, metadata: { ...m.metadata, createdAt: Date.now() } }
+      : m,
+  );
 }
 
 function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {

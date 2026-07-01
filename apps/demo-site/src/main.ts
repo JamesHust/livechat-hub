@@ -15,6 +15,8 @@ const widget = LiveChatHub.init({
   theme: 'default',
   locale: 'en',
   defaultOpen: true,
+  // Suggested prompts shown on the empty state — click one to start chatting.
+  suggestions: ['What is the weather?', 'Change the background', 'Delete a file'],
   // Frontend tools: the agent can act on THIS page, not just reply. Ask the
   // widget to "change the background" to see the agent call this in the browser.
   actions: [
@@ -43,6 +45,9 @@ widget.on('close', () => line('panel closed'));
 widget.on('run:status', (status) => line(`run status → ${status}`));
 widget.on('message', (m) => line(`message (${m.role}) #${m.id.slice(0, 12)}`));
 widget.on('error', (e) => line(`error: ${e.message}`));
+widget.on('feedback', (f) =>
+  line(`feedback → ${f.value ?? 'cleared'} on #${f.messageId.slice(0, 12)}`),
+);
 
 let dark = false;
 document.getElementById('open')?.addEventListener('click', () => widget.toggle());

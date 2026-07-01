@@ -1,5 +1,6 @@
 import {
   CONVERSATION_STORAGE_PREFIX,
+  DRAFT_STORAGE_PREFIX,
   PERSISTENCE_SCHEMA_VERSION,
   SESSION_STORAGE_KEY,
   type Session,
@@ -84,6 +85,11 @@ function conversationKey(tenantId: string): string {
   return `${CONVERSATION_STORAGE_PREFIX}:${tenantId}`;
 }
 
+/** Storage key for the composer draft, scoped per tenant. */
+export function draftKey(tenantId: string): string {
+  return `${DRAFT_STORAGE_PREFIX}:${tenantId}`;
+}
+
 /** Persisted localStorage envelope: a schema version + the message array. */
 interface MessageEnvelope {
   version: number;
@@ -164,6 +170,8 @@ export class PersistenceManager {
   constructor(
     private readonly storage: StorageAdapter,
     private readonly backend: MessageBackend,
+    /** Key under which the composer draft is kept (synchronous storage). */
+    private readonly draftStorageKey = DRAFT_STORAGE_PREFIX,
   ) {}
 
   loadSession(): Session | null {
@@ -182,7 +190,27 @@ export class PersistenceManager {
     return this.backend.persist(delta);
   }
 
+  /** Read the persisted composer draft (empty string when none / unavailable). */
+  loadDraft(): string {
+    try {
+      return this.storage.getItem(this.draftStorageKey) ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** Persist the composer draft; an empty draft removes the record. */
+  saveDraft(text: string): void {
+    try {
+      if (text) this.storage.setItem(this.draftStorageKey, text);
+      else this.storage.removeItem(this.draftStorageKey);
+    } catch {
+      /* quota exceeded / disabled — best-effort persistence */
+    }
+  }
+
   clear(): Promise<void> {
+    this.saveDraft('');
     return this.backend.clear();
   }
 }

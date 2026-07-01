@@ -17,9 +17,11 @@ import {
   LOCALE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   type Locale,
+  type MessageFeedback,
   type StringKey,
   type ThemeMode,
   type ThemeOverrides,
+  type UIMessage,
   type UploadFn,
 } from '@livechat-hub/shared';
 import { applyThemeToElement, resolveTheme } from '@livechat-hub/themes';
@@ -45,6 +47,13 @@ export interface ChatContextValue {
   setThemeMode: (mode: ThemeMode) => void;
   /** Resolve a user-attached file to a fetchable URL (or `undefined` to inline). */
   uploadFile?: UploadFn;
+  /** Static suggested prompts shown on the empty state (host-configured). */
+  suggestions: string[];
+  /**
+   * Notified when the end-user rates an assistant answer. `value` is `null` when
+   * a previous rating was toggled off. Hosts use it for analytics / retraining.
+   */
+  onFeedback?: (messageId: string, value: MessageFeedback | null, message: UIMessage) => void;
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null);
@@ -98,6 +107,10 @@ export interface ChatProviderProps {
   strings?: Partial<Record<string, string>>;
   /** Resolve user attachments to fetchable URLs; omit to inline as data URLs. */
   uploadFile?: UploadFn;
+  /** Suggested prompts shown on the empty state; clicking one sends it. */
+  suggestions?: string[];
+  /** Called when the end-user rates an assistant answer. See {@link ChatContextValue.onFeedback}. */
+  onFeedback?: (messageId: string, value: MessageFeedback | null, message: UIMessage) => void;
   children: ReactNode;
 }
 
@@ -110,6 +123,8 @@ export function ChatProvider({
   themeOverrides,
   strings,
   uploadFile,
+  suggestions,
+  onFeedback,
   children,
 }: ChatProviderProps) {
   const [locale, setLocaleState] = useState<Locale>(
@@ -155,6 +170,7 @@ export function ChatProvider({
   const resolvedRenderers = useMemo(() => resolveRenderers(renderers), [renderers]);
   const resolvedComponents = useMemo<GenerativeComponentMap>(() => components ?? {}, [components]);
   const t = useMemo(() => createTranslator(locale, strings), [locale, strings]);
+  const resolvedSuggestions = useMemo(() => suggestions ?? [], [suggestions]);
 
   const value = useMemo<ChatContextValue>(
     () => ({
@@ -167,6 +183,8 @@ export function ChatProvider({
       themeMode,
       setThemeMode,
       uploadFile,
+      suggestions: resolvedSuggestions,
+      onFeedback,
     }),
     [
       store,
@@ -178,6 +196,8 @@ export function ChatProvider({
       themeMode,
       setThemeMode,
       uploadFile,
+      resolvedSuggestions,
+      onFeedback,
     ],
   );
 
@@ -210,6 +230,9 @@ export function useChatActions() {
     sendMessage: state.sendMessage,
     abort: state.abort,
     retryLast: state.retryLast,
+    retryMessage: state.retryMessage,
+    regenerate: state.regenerate,
+    setFeedback: state.setFeedback,
     clear: state.clear,
   };
 }
