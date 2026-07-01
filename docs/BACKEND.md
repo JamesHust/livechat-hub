@@ -28,11 +28,23 @@ Content-Type: application/json
 ### Response
 
 An SSE stream of AG-UI events, one JSON object per `data:` frame. Terminate with
-`data: [DONE]` or by closing the stream. Required ordering for a text turn:
+`data: [DONE]` or a `RUN_FINISHED` / `RUN_ERROR` event, or by closing the stream.
+Required ordering for a text turn:
 
 ```
 RUN_STARTED → TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT* → TEXT_MESSAGE_END → RUN_FINISHED
 ```
+
+Each frame **should** carry a monotonic `id:` field:
+
+```
+id: 42
+data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"msg_1","delta":"Hello"}
+
+```
+
+The client tracks the last id it received and dedupes replayed frames by id, so
+ids must be **stable across a reconnect** (see _Resilience_ below).
 
 ## Event types
 
@@ -56,10 +68,38 @@ RUN_STARTED → TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT* → TEXT_MESSAGE_EN
 The exact TypeScript shapes are the source of truth — see
 [`packages/transport/src/events.ts`](../packages/transport/src/events.ts).
 
+## Resilience & reconnection
+
+The SSE transport is built to survive flaky networks. The backend should
+cooperate with these client behaviors:
+
+- **Reconnect + backoff.** If the stream drops before a terminal event
+  (`RUN_FINISHED` / `RUN_ERROR` / `[DONE]`), the client reconnects with
+  exponential backoff + jitter, up to `maxRetries` (default 5) attempts, before
+  reporting the run `failed`. Tuning lives in `TRANSPORT_DEFAULTS`
+  ([`packages/shared/src/constants.ts`](../packages/shared/src/constants.ts)).
+- **Resume via `Last-Event-ID`.** On reconnect the client repeats the same
+  `POST` with a `Last-Event-ID: <id>` header carrying the last `id:` it saw.
+  The backend **should resume after that id** (not replay the whole run). If it
+  can only replay from the start, that is still safe: the client dedupes frames
+  whose `id` it has already delivered, so streamed text is never doubled.
+- **Idle timeout + heartbeat.** The client aborts and reconnects a stream that
+  sends no bytes for `idleTimeoutMs` (default 30s). To keep a slow run alive,
+  emit an SSE **comment heartbeat** (`:\n\n`, optionally `: ping`) well under
+  that interval; any frame — data or comment — resets the client's watchdog.
+- **Auth (`401` / `403`).** The client attaches `Authorization: Bearer <token>`
+  from `config.resilience.getAuthToken`. On a `401`/`403` it invokes
+  `config.resilience.onAuthError` once (refresh your session there) and retries
+  the request a single time with a freshly fetched token.
+- **Rate limiting (`429`).** The client honors a `Retry-After` header
+  (delta-seconds or HTTP-date) before retrying; absent the header it falls back
+  to normal backoff.
+
 ## Reference mock
 
 [`apps/demo-site/mock-agent.ts`](../apps/demo-site/mock-agent.ts) implements this
-contract as Vite dev middleware and is the canonical example to port to Go.
+contract as Vite dev middleware and is the canonical example to port to Go — it
+emits monotonic `id:` frames per the resume contract above.
 
 ## Attachments (images, files, video, voice)
 

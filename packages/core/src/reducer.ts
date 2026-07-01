@@ -25,11 +25,17 @@ export function applyEventToMessages(messages: UIMessage[], event: AgUiEvent): U
     case AgUiEventType.TextMessageContent:
       return appendToTextLike(messages, event.messageId, 'text', event.delta);
 
+    case AgUiEventType.TextMessageEnd:
+      return sealTextLike(messages, event.messageId, 'text');
+
     case AgUiEventType.ReasoningStart:
       return ensureMessage(messages, event.messageId, 'assistant');
 
     case AgUiEventType.ReasoningContent:
       return appendToTextLike(messages, event.messageId, 'reasoning', event.delta);
+
+    case AgUiEventType.ReasoningEnd:
+      return sealTextLike(messages, event.messageId, 'reasoning');
 
     case AgUiEventType.ToolCallStart:
       return updateMessage(messages, event.messageId, 'assistant', (parts) => [
@@ -98,7 +104,11 @@ function updateMessage(
   return base.map((m) => (m.id === id ? { ...m, parts: update(m.parts) } : m));
 }
 
-/** Append a delta to the trailing text/reasoning part, creating one if needed. */
+/**
+ * Append a delta to the trailing text/reasoning part, creating one if needed.
+ * A part already sealed by its `*_END` event is never reopened — a subsequent
+ * delta for the same message starts a fresh block instead of merging into it.
+ */
 function appendToTextLike(
   messages: UIMessage[],
   id: string,
@@ -107,12 +117,37 @@ function appendToTextLike(
 ): UIMessage[] {
   return updateMessage(messages, id, 'assistant', (parts) => {
     const last = parts[parts.length - 1];
-    if (last && last.type === kind) {
-      const updated = { ...last, text: last.text + delta } as TextPart | ReasoningPart;
+    if (last && last.type === kind && last.state !== 'done') {
+      const updated = {
+        ...last,
+        text: last.text + delta,
+        state: 'streaming',
+      } as TextPart | ReasoningPart;
       return [...parts.slice(0, -1), updated];
     }
-    const fresh = { type: kind, text: delta } as TextPart | ReasoningPart;
+    const fresh = { type: kind, text: delta, state: 'streaming' } as TextPart | ReasoningPart;
     return [...parts, fresh];
+  });
+}
+
+/** Mark the trailing text/reasoning block of a message complete (`state: 'done'`). */
+function sealTextLike(messages: UIMessage[], id: string, kind: 'text' | 'reasoning'): UIMessage[] {
+  return messages.map((m) => {
+    if (m.id !== id) return m;
+    let index = -1;
+    for (let i = m.parts.length - 1; i >= 0; i--) {
+      if (m.parts[i]?.type === kind) {
+        index = i;
+        break;
+      }
+    }
+    if (index === -1) return m;
+    return {
+      ...m,
+      parts: m.parts.map((p, i) =>
+        i === index ? ({ ...p, state: 'done' } as TextPart | ReasoningPart) : p,
+      ),
+    };
   });
 }
 

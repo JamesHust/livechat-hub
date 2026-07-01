@@ -93,10 +93,16 @@ export function mountWidget(options: MountOptions): WidgetInstance {
   };
   applyTheme(options.theme ?? 'default');
 
-  // 4. Transport + headless store.
+  // 4. Transport + headless store. Resilience hooks (auth refresh, reconnect /
+  // idle tuning) flow through to the SSE transport; omitted knobs fall back to
+  // `TRANSPORT_DEFAULTS`.
   const transport = createSseTransport({
     apiUrl: options.apiUrl,
     headers: { ...options.headers, 'x-tenant-id': options.tenantId },
+    getAuthToken: options.resilience?.getAuthToken,
+    onAuthError: options.resilience?.onAuthError,
+    maxRetries: options.resilience?.maxRetries,
+    idleTimeoutMs: options.resilience?.idleTimeoutMs,
   });
   const store = createChatStore({
     transport,

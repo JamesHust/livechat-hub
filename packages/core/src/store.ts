@@ -1,5 +1,6 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type {
+  Artifact,
   InterruptResolution,
   MessagePart,
   RunState,
@@ -12,7 +13,13 @@ import { applyEventToMessages } from './reducer';
 import { applyJsonPatch } from './state-patch';
 import { createId } from './id';
 import { resolveSession } from './session';
-import { defaultStorage, PersistenceManager, type StorageAdapter } from './persistence';
+import {
+  defaultMessageBackend,
+  defaultStorage,
+  PersistenceManager,
+  type MessageBackend,
+  type StorageAdapter,
+} from './persistence';
 
 /**
  * Safety cap on consecutive frontend-tool rounds in a single turn. Each round
@@ -27,6 +34,8 @@ export interface ChatState {
   run: RunState;
   /** Shared agent state synchronized via STATE_SNAPSHOT / STATE_DELTA. */
   agentState: Record<string, unknown>;
+  /** Latest agent-authored artifacts, keyed by id (via ARTIFACT_UPDATE). */
+  artifacts: Record<string, Artifact>;
 }
 
 export interface ChatActions {
@@ -74,8 +83,17 @@ export interface CreateChatStoreOptions {
   transport: Transport;
   tenantId: string;
   userId?: string;
-  /** Persistence storage. Pass `null` to disable persistence entirely. */
+  /**
+   * Synchronous storage for the (small) session. Pass `null` to disable
+   * persistence entirely. Defaults to localStorage (memory fallback).
+   */
   storage?: StorageAdapter | null;
+  /**
+   * Backend for the (potentially large) conversation history. Defaults to
+   * IndexedDB when available, else a localStorage/JSON envelope. Ignored when
+   * `storage` is `null`.
+   */
+  messageBackend?: MessageBackend;
 }
 
 export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatStore> {
@@ -83,7 +101,11 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
   const persistence =
     options.storage === null
       ? null
-      : new PersistenceManager(options.storage ?? defaultStorage(), tenantId);
+      : (() => {
+          const storage = options.storage ?? defaultStorage();
+          const backend = options.messageBackend ?? defaultMessageBackend(tenantId, storage);
+          return new PersistenceManager(storage, backend);
+        })();
 
   const session = persistence
     ? resolveSession(persistence, tenantId, userId)
@@ -93,10 +115,24 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
   // Interrupt resolutions to attach to the next run, set by `resume()` and
   // consumed once by the following `streamRun()`.
   let pendingResume: InterruptResolution[] | null = null;
+  // Last-persisted reference per message id. The reducer keeps unchanged
+  // messages referentially identical, so a reference diff cheaply yields the
+  // new / mutated messages to upsert and the removed ids to delete — an
+  // incremental write instead of rewriting the entire history each save.
+  let persistedRefs = new Map<string, UIMessage>();
   const registry = createActionRegistry();
 
   const store = createStore<ChatStore>((set, get) => {
-    const persistMessages = () => persistence?.saveMessages(get().messages);
+    const persistMessages = () => {
+      if (!persistence) return;
+      const messages = get().messages;
+      const changed = messages.filter((m) => persistedRefs.get(m.id) !== m);
+      const currentIds = new Set(messages.map((m) => m.id));
+      const removed = [...persistedRefs.keys()].filter((id) => !currentIds.has(id));
+      persistedRefs = new Map(messages.map((m) => [m.id, m]));
+      if (changed.length === 0 && removed.length === 0) return;
+      void persistence.persistMessages({ order: messages.map((m) => m.id), changed, removed });
+    };
 
     /** Stream a single backend run, folding its events into store state. */
     async function streamRun(): Promise<void> {
@@ -153,6 +189,19 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
             case AgUiEventType.StateDelta:
               set({ agentState: applyJsonPatch(get().agentState, event.delta) });
               break;
+            case AgUiEventType.ArtifactUpdate:
+              set({
+                artifacts: {
+                  ...get().artifacts,
+                  [event.artifactId]: {
+                    id: event.artifactId,
+                    kind: event.kind,
+                    payload: event.payload,
+                    updatedAt: Date.now(),
+                  },
+                },
+              });
+              break;
             default:
               set({ messages: applyEventToMessages(get().messages, event) });
           }
@@ -169,6 +218,17 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         }
       } finally {
         abortController = null;
+        // The turn reached a terminal state: no more results will arrive, so any
+        // tool call still awaiting one (backend died after TOOL_CALL_END, or
+        // args never finished) must not hang forever — mark it errored. Frontend
+        // tool calls are excluded: the browser resolves those next (see runTurn).
+        const status = get().run.status;
+        if (status === 'completed' || status === 'failed') {
+          const reconciled = reconcileOrphanToolCalls(get().messages, (name) =>
+            Boolean(registry.getAction(name)),
+          );
+          if (reconciled !== get().messages) set({ messages: reconciled });
+        }
         persistMessages();
       }
     }
@@ -223,9 +283,12 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
     return {
       session,
-      messages: persistence?.loadMessages() ?? [],
+      // Starts empty; persisted history is hydrated asynchronously below
+      // (IndexedDB has no synchronous read).
+      messages: [],
       run: { status: 'idle' },
       agentState: {},
+      artifacts: {},
 
       async sendMessage(text, extraParts = []) {
         const trimmed = text.trim();
@@ -272,8 +335,9 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
       clear() {
         abortController?.abort();
-        set({ messages: [], run: { status: 'idle' }, agentState: {} });
-        persistence?.clear();
+        persistedRefs = new Map();
+        set({ messages: [], run: { status: 'idle' }, agentState: {}, artifacts: {} });
+        void persistence?.clear();
       },
 
       setAgentState(next) {
@@ -294,7 +358,62 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
     };
   });
 
+  // Hydrate persisted history asynchronously. Only adopt it if the user hasn't
+  // already started interacting (messages still empty, run idle), so a slow disk
+  // read never clobbers a fresh message.
+  if (persistence) {
+    void persistence
+      .loadMessages()
+      .then((loaded) => {
+        if (loaded.length === 0) return;
+        const state = store.getState();
+        if (state.messages.length === 0 && state.run.status === 'idle') {
+          persistedRefs = new Map(loaded.map((m) => [m.id, m]));
+          store.setState({ messages: loaded });
+        }
+      })
+      .catch(() => {
+        /* corrupt / unavailable store — start fresh */
+      });
+  }
+
   return store;
+}
+
+/**
+ * Mark tool calls that will never receive a result as `error`, so the UI never
+ * shows a spinner forever. A call is orphaned when the turn ended and it has no
+ * matching `tool-result` and is not a pending frontend action (which the browser
+ * still has to execute). Returns the same array reference when nothing changed.
+ */
+function reconcileOrphanToolCalls(
+  messages: UIMessage[],
+  isFrontendAction: (name: string) => boolean,
+): UIMessage[] {
+  const resolved = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type === 'tool-result') resolved.add(part.toolCallId);
+    }
+  }
+
+  let changed = false;
+  const next = messages.map((message) => {
+    let partsChanged = false;
+    const parts = message.parts.map((part) => {
+      if (part.type !== 'tool-call') return part;
+      if (part.state === 'output-available' || part.state === 'error') return part;
+      if (resolved.has(part.toolCallId)) return part;
+      // A finished frontend call still awaiting browser execution — leave it.
+      if (part.state === 'input-available' && isFrontendAction(part.toolName)) return part;
+      partsChanged = true;
+      return { ...part, state: 'error' as const };
+    });
+    if (!partsChanged) return message;
+    changed = true;
+    return { ...message, parts };
+  });
+  return changed ? next : messages;
 }
 
 /** A frontend tool call the agent left for the browser to execute. */

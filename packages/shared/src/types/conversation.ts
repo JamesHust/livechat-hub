@@ -67,3 +67,18 @@ export interface RunState {
   /** Open human-in-the-loop interrupts awaiting the user, when `interrupted`. */
   interrupts?: RunInterrupt[];
 }
+
+/**
+ * A live agent-authored artifact (document, chart, generated UI, …) delivered
+ * out-of-band from the message stream via `ARTIFACT_UPDATE` and keyed by
+ * `id`. The store keeps the latest payload per id; Sprint 5.4 surfaces these in
+ * a dedicated artifact panel. `kind` is a logical type the UI resolves at
+ * render time; `payload` is opaque, provider-agnostic content.
+ */
+export interface Artifact {
+  id: string;
+  kind: string;
+  payload: unknown;
+  /** Client clock (epoch ms) of the last update, for ordering / freshness. */
+  updatedAt?: number;
+}

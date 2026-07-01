@@ -12,14 +12,24 @@ export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 /** Lifecycle of a streamed tool invocation. */
 export type ToolCallState = 'partial' | 'input-available' | 'output-available' | 'error';
 
+/**
+ * Streaming lifecycle of a text-like part: `'streaming'` while deltas are still
+ * arriving, `'done'` once the matching `*_END` event sealed it. Absent on parts
+ * that never streamed (e.g. a user message). Sealing forces a later delta for
+ * the same message into a fresh part instead of merging blocks.
+ */
+export type TextStreamState = 'streaming' | 'done';
+
 export interface TextPart {
   type: 'text';
   text: string;
+  state?: TextStreamState;
 }
 
 export interface ReasoningPart {
   type: 'reasoning';
   text: string;
+  state?: TextStreamState;
 }
 
 export interface ToolCallPart {
