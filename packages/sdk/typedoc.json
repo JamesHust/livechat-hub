@@ -1,0 +1,12 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "../../docs/api",
+  "tsconfig": "tsconfig.json",
+  "name": "LiveChat Hub SDK — API Reference",
+  "readme": "none",
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "githubPages": false,
+  "hideGenerator": true
+}

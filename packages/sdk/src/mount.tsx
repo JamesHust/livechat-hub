@@ -31,12 +31,25 @@ export interface MountOptions extends LiveChatConfig {
   context?: ContextProvider[];
 }
 
+/**
+ * Handle returned by {@link LiveChatHub.init}. The imperative surface a host
+ * page uses to drive the widget — no React knowledge required.
+ */
 export interface WidgetInstance {
+  /** Open the chat panel. No-op if already open. */
   open(): void;
+  /** Close the chat panel. No-op if already closed. */
   close(): void;
+  /** Toggle the panel between open and closed. */
   toggle(): void;
+  /** Whether the panel is currently open. */
   isOpen(): boolean;
+  /** Send a user message as if typed into the composer, starting a run. */
   sendMessage(text: string): void;
+  /**
+   * Switch the color scheme at runtime, optionally patching `--lch-*` token
+   * overrides. Restyles the live widget without a re-init.
+   */
   setTheme(theme: 'default' | 'dark' | 'auto', overrides?: ThemeOverrides): void;
   /**
    * Register a frontend tool the agent can call in the browser. Returns an
@@ -45,8 +58,11 @@ export interface WidgetInstance {
   registerAction(action: FrontendAction): () => void;
   /** Register a live host-page context provider. Returns an unregister function. */
   registerContext(provider: ContextProvider): () => void;
+  /** Unmount the widget, clear subscriptions, and remove the host element. */
   destroy(): void;
+  /** Subscribe to a lifecycle event (`ready`, `open`, `message`, `error`, …). */
   on: Emitter['on'];
+  /** Remove a previously registered event listener. */
   off: Emitter['off'];
 }
 

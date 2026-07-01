@@ -1,0 +1,8 @@
+[
+  {
+    "name": "SDK embed bundle (gzip)",
+    "path": "packages/sdk/dist/livechat-sdk.js",
+    "limit": "1700 KB",
+    "gzip": true
+  }
+]

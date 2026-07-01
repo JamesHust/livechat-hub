@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Never run two releases for the same ref concurrently.
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  # Runs on every PR and push: proves the publishable package still packs
+  # cleanly (name, version, `files`, tarball contents) without touching the
+  # registry. This is the release pipeline's guardrail.
+  publish-dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Dry-run publish (@livechat-hub/sdk)
+        run: pnpm --filter @livechat-hub/sdk publish --dry-run --no-git-checks
+
+  # Only on main: applies accumulated changesets via a "Version Packages" PR,
+  # and publishes when that PR merges. A no-op until a changeset exists and an
+  # NPM_TOKEN secret is configured, so it is safe to keep enabled.
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: changesets/action@v1
+        with:
+          version: pnpm run version:packages
+          publish: pnpm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

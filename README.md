@@ -120,13 +120,22 @@ pnpm dev
 pnpm typecheck   # tsc --noEmit across the graph
 pnpm lint        # ESLint (flat config)
 pnpm test        # Vitest unit/component tests
+pnpm test:e2e    # Playwright E2E against the demo (mock backend)
 pnpm build       # Turborepo build (SDK + apps bundles)
+pnpm size        # Bundle-size budget for the embed bundle (after build)
 ```
+
+> First E2E run: install the browser once with `pnpm --filter @livechat-hub/demo-site exec playwright install chromium`.
+> Releases are managed with [Changesets](docs/RELEASING.md) (`pnpm changeset`).
 
 ## Embedding (production)
 
+Build the self-contained bundle with `pnpm --filter @livechat-hub/sdk build`
+(emits `packages/sdk/dist/livechat-sdk.js`) and host it on your CDN. The bundle
+inlines React and every workspace package, so a partner page needs nothing else:
+
 ```html
-<script src="livechat-sdk.js"></script>
+<script src="https://your-cdn.example.com/livechat-sdk.js"></script>
 <script>
   LiveChatHub.init({
     apiUrl: 'https://api.example.com',
@@ -136,8 +145,32 @@ pnpm build       # Turborepo build (SDK + apps bundles)
 </script>
 ```
 
-Build the bundle with `pnpm --filter @livechat-hub/sdk build`
-(emits `packages/sdk/dist/livechat-sdk.js`).
+### Authenticated backends
+
+Pass short-lived tokens through the `resilience` hooks — the transport attaches
+`Authorization: Bearer …` to every run, refreshes once on `401`/`403`, and
+honors `Retry-After` on `429`:
+
+```js
+LiveChatHub.init({
+  apiUrl: 'https://api.example.com',
+  tenantId: 'tenant_123',
+  resilience: {
+    getAuthToken: () => sessionStore.getToken(), // called per request
+    onAuthError: async () => sessionStore.refresh(), // called once on 401/403
+  },
+});
+```
+
+### Hardening & distribution
+
+- **CSP + auth + storage model:** see [`SECURITY.md`](SECURITY.md) for the
+  Content-Security-Policy the widget needs and its data-persistence behavior.
+- **Bundle size** is a tracked KPI — CI enforces a gzip budget on the embed
+  bundle (`pnpm size`).
+- **API reference:** `pnpm docs:api` generates typed docs for the public SDK
+  surface into `docs/api/`.
+- **Releases & npm:** see [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## Design notes
 
