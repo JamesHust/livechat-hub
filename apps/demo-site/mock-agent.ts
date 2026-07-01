@@ -17,7 +17,11 @@ export function mockAgentPlugin(path = '/agent/run'): Plugin {
           return;
         }
         const body = await readJson(req);
-        await streamMockRun(res, body);
+        // The client echoes the last delivered SSE id on reconnect (the resume
+        // contract in docs/BACKEND.md). We use its presence to distinguish a
+        // first attempt from a resumed one in the fault-injection path below.
+        const lastEventId = firstHeader(req.headers['last-event-id']);
+        await streamMockRun(res, body, lastEventId);
       });
     },
   };
@@ -48,7 +52,11 @@ function isApproved(value: unknown): boolean {
   );
 }
 
-async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> {
+async function streamMockRun(
+  res: ServerResponse,
+  body: RunBody,
+  lastEventId?: string,
+): Promise<void> {
   res.writeHead(200, {
     'content-type': 'text/event-stream',
     'cache-control': 'no-cache',
@@ -56,8 +64,10 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
   });
 
   // Monotonic frame id per the resume contract (docs/BACKEND.md): the client
-  // echoes the last id as `Last-Event-ID` on reconnect and dedupes by it.
-  let seq = 0;
+  // echoes the last id as `Last-Event-ID` on reconnect and dedupes by it. On a
+  // resumed run we continue numbering *after* that id so the replayed frames get
+  // fresh ids the client hasn't seen — exactly what a resumable backend does.
+  let seq = Number.parseInt(lastEventId ?? '', 10) || 0;
   const send = (event: unknown) => res.write(`id: ${++seq}\ndata: ${JSON.stringify(event)}\n\n`);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -65,6 +75,32 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
   const prompt = lastUser?.parts?.find((p) => p.type === 'text')?.text ?? '';
   const runId = `run_${Date.now()}`;
   const messageId = `msg_${Date.now()}`;
+
+  // Fault injection for E2E/resilience testing: the first attempt (no
+  // Last-Event-ID) starts a reply then drops the socket mid-stream without a
+  // terminal event. The transport reconnects with the last id; this branch then
+  // resumes the *same* assistant message and finishes cleanly — proving the
+  // widget survives a mid-stream network drop with no duplicated text.
+  if (/\bflaky\b|reconnect-test/i.test(prompt)) {
+    const flakyMsg = 'msg_flaky';
+    if (lastEventId === undefined) {
+      send({ type: 'RUN_STARTED', runId });
+      send({ type: 'TEXT_MESSAGE_START', messageId: flakyMsg, role: 'assistant' });
+      send({ type: 'TEXT_MESSAGE_CONTENT', messageId: flakyMsg, delta: 'Reconnected ' });
+      await sleep(50);
+      res.destroy(); // abrupt close — no RUN_FINISHED, so the client retries
+      return;
+    }
+    send({
+      type: 'TEXT_MESSAGE_CONTENT',
+      messageId: flakyMsg,
+      delta: 'successfully — the stream resumed without losing your reply.',
+    });
+    send({ type: 'TEXT_MESSAGE_END', messageId: flakyMsg });
+    send({ type: 'RUN_FINISHED', runId });
+    res.end();
+    return;
+  }
 
   send({ type: 'RUN_STARTED', runId });
   await sleep(250);
@@ -194,6 +230,11 @@ function buildReply(prompt: string): string {
     '_frontend_ tool in your browser), or ask me to **delete a file** (a ' +
     'human-in-the-loop approval step).'
   );
+}
+
+/** Node lowercases header names but a value may arrive as string | string[]. */
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function readJson(req: IncomingMessage): Promise<RunBody> {
