@@ -1,3 +1,11 @@
+/**
+ * Public entry point for **LiveChat Hub** — the AI-provider-agnostic live chat
+ * widget. Consumers embed the built `livechat-sdk.js` bundle and call
+ * {@link LiveChatHub.init} to mount the widget into a Shadow DOM. Everything the
+ * host page needs is re-exported here; internals stay private.
+ *
+ * @packageDocumentation
+ */
 import { mountWidget, type MountOptions, type WidgetInstance } from './mount';
 
 export type { MountOptions, WidgetInstance };
