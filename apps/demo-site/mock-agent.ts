@@ -55,7 +55,10 @@ async function streamMockRun(res: ServerResponse, body: RunBody): Promise<void> 
     connection: 'keep-alive',
   });
 
-  const send = (event: unknown) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  // Monotonic frame id per the resume contract (docs/BACKEND.md): the client
+  // echoes the last id as `Last-Event-ID` on reconnect and dedupes by it.
+  let seq = 0;
+  const send = (event: unknown) => res.write(`id: ${++seq}\ndata: ${JSON.stringify(event)}\n\n`);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === 'user');

@@ -48,7 +48,76 @@ describe('createChatStore', () => {
     expect(run.status).toBe('completed');
     expect(messages).toHaveLength(2);
     expect(messages[0]?.role).toBe('user');
-    expect(messages[1]?.parts).toEqual([{ type: 'text', text: 'Hello' }]);
+    // TEXT_MESSAGE_END sealed the streamed block (`state: 'done'`).
+    expect(messages[1]?.parts).toEqual([{ type: 'text', text: 'Hello', state: 'done' }]);
+  });
+
+  it('starts a fresh text block after an END seals the previous one', async () => {
+    const transport = fakeTransport([
+      { type: AgUiEventType.RunStarted, runId: 'r1' },
+      { type: AgUiEventType.TextMessageStart, messageId: 'a1', role: 'assistant' },
+      { type: AgUiEventType.TextMessageContent, messageId: 'a1', delta: 'One' },
+      { type: AgUiEventType.TextMessageEnd, messageId: 'a1' },
+      { type: AgUiEventType.TextMessageContent, messageId: 'a1', delta: 'Two' },
+      { type: AgUiEventType.TextMessageEnd, messageId: 'a1' },
+      { type: AgUiEventType.RunFinished, runId: 'r1' },
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hi');
+
+    // Sealing prevents the second delta from merging into the first block.
+    expect(store.getState().messages[1]?.parts).toEqual([
+      { type: 'text', text: 'One', state: 'done' },
+      { type: 'text', text: 'Two', state: 'done' },
+    ]);
+  });
+
+  it('seals a reasoning block on REASONING_END', async () => {
+    const transport = fakeTransport([
+      { type: AgUiEventType.ReasoningStart, messageId: 'a1' },
+      { type: AgUiEventType.ReasoningContent, messageId: 'a1', delta: 'thinking' },
+      { type: AgUiEventType.ReasoningEnd, messageId: 'a1' },
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hi');
+    expect(store.getState().messages[1]?.parts).toEqual([
+      { type: 'reasoning', text: 'thinking', state: 'done' },
+    ]);
+  });
+
+  it('keeps ARTIFACT_UPDATE payloads in state keyed by id', async () => {
+    const transport = fakeTransport([
+      { type: AgUiEventType.RunStarted, runId: 'r1' },
+      { type: AgUiEventType.ArtifactUpdate, artifactId: 'doc1', kind: 'markdown', payload: '# v1' },
+      { type: AgUiEventType.ArtifactUpdate, artifactId: 'doc1', kind: 'markdown', payload: '# v2' },
+      { type: AgUiEventType.RunFinished, runId: 'r1' },
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('make a doc');
+
+    const artifact = store.getState().artifacts['doc1'];
+    expect(artifact).toMatchObject({ id: 'doc1', kind: 'markdown', payload: '# v2' });
+  });
+
+  it('errors an orphaned tool call when the run ends without a result', async () => {
+    // Backend tool: START + ARGS + END, then the run finishes with no RESULT.
+    const transport = fakeTransport([
+      { type: AgUiEventType.RunStarted, runId: 'r1' },
+      {
+        type: AgUiEventType.ToolCallStart,
+        messageId: 'a1',
+        toolCallId: 'c1',
+        toolName: 'db_query',
+      },
+      { type: AgUiEventType.ToolCallArgs, toolCallId: 'c1', delta: '{"sql":"SELECT 1"}' },
+      { type: AgUiEventType.ToolCallEnd, toolCallId: 'c1' },
+      { type: AgUiEventType.RunFinished, runId: 'r1' },
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('query');
+
+    const call = store.getState().messages[1]?.parts.find((p) => p.type === 'tool-call');
+    expect(call).toMatchObject({ toolCallId: 'c1', state: 'error' });
   });
 
   it('captures tool call lifecycle and result', async () => {

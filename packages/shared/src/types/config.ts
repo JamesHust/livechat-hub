@@ -20,6 +20,33 @@ export type ThemeMode = 'light' | 'dark' | 'auto';
 export type UploadFn = (file: File) => Promise<{ url: string; mimeType?: string }>;
 
 /**
+ * Supplies (or refreshes) the bearer token attached to every transport request.
+ * Called immediately before each attempt — including reconnects and the retry
+ * after {@link ResilienceConfig.onAuthError} — so a token refreshed out of band
+ * is picked up automatically. Return `undefined` to send no `Authorization`.
+ */
+export type GetAuthToken = () => string | undefined | Promise<string | undefined>;
+
+/**
+ * Transport resilience hooks/tuning. Sensible defaults come from
+ * `TRANSPORT_DEFAULTS`; override only what a deployment needs.
+ */
+export interface ResilienceConfig {
+  /** @see GetAuthToken */
+  getAuthToken?: GetAuthToken;
+  /**
+   * Invoked once when a run fails with `401`/`403`. Use it to refresh the
+   * session (e.g. mint a new token) before the transport retries the request a
+   * single time with a freshly fetched {@link getAuthToken}.
+   */
+  onAuthError?: (status: number) => void | Promise<void>;
+  /** Max reconnect attempts before the run is reported `failed`. */
+  maxRetries?: number;
+  /** Reconnect a stream idle (no bytes/heartbeat) longer than this (ms). `0` disables. */
+  idleTimeoutMs?: number;
+}
+
+/**
  * Public configuration accepted by the SDK. Intentionally free of any
  * AI-provider or framework concept — only transport endpoint + presentation.
  */
@@ -53,4 +80,10 @@ export interface LiveChatConfig {
    * `data:` URLs (no upload backend required).
    */
   uploadFile?: UploadFn;
+  /**
+   * Streaming resilience: auth-token refresh + reconnect/idle tuning. The
+   * transport reconnects dropped SSE streams with exponential backoff and
+   * resumes them via `Last-Event-ID`; these hooks/knobs steer that behavior.
+   */
+  resilience?: ResilienceConfig;
 }

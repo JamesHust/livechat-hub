@@ -26,4 +26,13 @@ export const TRANSPORT_DEFAULTS = {
   maxRetries: 5,
   baseRetryDelayMs: 500,
   maxRetryDelayMs: 10_000,
+  /**
+   * Abort and reconnect a stream that goes silent for this long (no bytes /
+   * no heartbeat). `0` disables the idle watchdog. Backends should emit an SSE
+   * comment ping (`:\n\n`) well under this interval to keep the stream alive.
+   */
+  idleTimeoutMs: 30_000,
 } as const;
+
+/** Schema version for persisted conversation records; bump on shape changes. */
+export const PERSISTENCE_SCHEMA_VERSION = 1;
