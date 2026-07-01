@@ -43,3 +43,6 @@ apps/extension/dist/
 
 # Internal planning docs (kept local, not pushed)
 docs/ROADMAP.md
+
+# Generated API reference (rebuilt from source, not versioned)
+docs/api/
