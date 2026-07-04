@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import type {
   Artifact,
+  ConversationSummary,
   InterruptResolution,
   MessageFeedback,
   MessageMetadata,
@@ -14,16 +15,24 @@ import { AgUiEventType, type Transport } from '@livechat-hub/transport';
 import { createActionRegistry, type ContextProvider, type FrontendAction } from './actions';
 import { applyEventToMessages } from './reducer';
 import { applyJsonPatch } from './state-patch';
+import { messageText } from './search';
 import { createId } from './id';
 import { resolveSession } from './session';
 import {
+  conversationIndexKey,
   defaultMessageBackend,
+  defaultMessageBackendFactory,
   defaultStorage,
   draftKey,
   PersistenceManager,
   type MessageBackend,
+  type MessageBackendFactory,
   type StorageAdapter,
 } from './persistence';
+
+/** Longest auto-derived conversation title / preview snippet (characters). */
+const TITLE_MAX = 60;
+const PREVIEW_MAX = 80;
 
 /**
  * Safety cap on consecutive frontend-tool rounds in a single turn. Each round
@@ -32,14 +41,44 @@ import {
  */
 const MAX_FRONTEND_TOOL_ROUNDS = 8;
 
+/**
+ * A consequential frontend action paused on an explicit user approval before
+ * its handler runs (see {@link FrontendAction.requireConfirmation}). The UI
+ * renders one approval card per entry and answers via {@link ChatActions.confirmAction}.
+ */
+export interface ActionConfirmation {
+  /** Id of the tool call whose handler is gated. */
+  toolCallId: string;
+  toolName: string;
+  /** Parsed arguments the handler would run with — shown for review. */
+  args: Record<string, unknown>;
+  /** Prompt to show; falls back to a generic localized message in the UI. */
+  message?: string;
+}
+
+/** Outcome of an awaited action confirmation. */
+type ConfirmDecision = 'approved' | 'denied' | 'aborted';
+
 export interface ChatState {
   session: Session;
+  /** Messages of the active conversation (the live thread the UI renders). */
   messages: UIMessage[];
   run: RunState;
+  /**
+   * All conversations for this tenant (the multi-thread sidebar), most-recent
+   * ordering left to the UI. The active thread's messages live in `messages`.
+   */
+  conversations: ConversationSummary[];
+  /** Id of the conversation currently open (its history is in `messages`). */
+  activeConversationId: string;
   /** Shared agent state synchronized via STATE_SNAPSHOT / STATE_DELTA. */
   agentState: Record<string, unknown>;
   /** Latest agent-authored artifacts, keyed by id (via ARTIFACT_UPDATE). */
   artifacts: Record<string, Artifact>;
+  /** Names of frontend tools currently registered (for renderers to label them). */
+  frontendTools: string[];
+  /** Consequential frontend actions awaiting user approval before running. */
+  actionConfirmations: ActionConfirmation[];
 }
 
 export interface ChatActions {
@@ -47,6 +86,13 @@ export interface ChatActions {
   sendMessage(text: string, extraParts?: MessagePart[]): Promise<void>;
   /** Abort the in-flight run, if any. */
   abort(): void;
+  /**
+   * Answer a pending frontend-action confirmation by tool-call id (see
+   * {@link ChatState.actionConfirmations}). Approving runs the gated handler and
+   * continues the turn; rejecting returns a "declined" result to the agent.
+   * No-op for an unknown / already-answered id.
+   */
+  confirmAction(toolCallId: string, approved: boolean): void;
   /**
    * Resume a paused (interrupted) run by answering every open interrupt. No-op
    * unless the run is currently `interrupted`. See {@link InterruptResolution}.
@@ -74,8 +120,22 @@ export interface ChatActions {
   loadDraft(): string;
   /** Persist the composer draft; pass an empty string to clear it. */
   saveDraft(text: string): void;
-  /** Clear all messages and persisted history (keeps the session). */
+  /** Clear the active conversation's messages and persisted history (keeps the thread). */
   clear(): void;
+  /**
+   * Start a new, empty conversation and switch to it. No-op if the active
+   * conversation is already empty (you're already on a blank thread).
+   */
+  newConversation(): void;
+  /** Switch to an existing conversation by id, loading its history. No-op if unknown. */
+  switchConversation(id: string): void;
+  /**
+   * Delete a conversation and its history. If it was active, switches to the
+   * most recent remaining thread (or a fresh empty one when none remain).
+   */
+  deleteConversation(id: string): void;
+  /** Rename a conversation, pinning a title that auto-derivation won't overwrite. */
+  renameConversation(id: string, title: string): void;
   /**
    * Update the shared agent state from the frontend. Accepts a replacement
    * object or an updater. The new state is forwarded to the agent (via
@@ -113,11 +173,17 @@ export interface CreateChatStoreOptions {
    */
   storage?: StorageAdapter | null;
   /**
-   * Backend for the (potentially large) conversation history. Defaults to
-   * IndexedDB when available, else a localStorage/JSON envelope. Ignored when
-   * `storage` is `null`.
+   * Backend for a single conversation's history. When set it backs **every**
+   * conversation (a shared store) — mainly a test seam. Prefer
+   * `messageBackendFactory` for real per-thread isolation.
    */
   messageBackend?: MessageBackend;
+  /**
+   * Per-conversation backend factory. Defaults to IndexedDB when available
+   * (partitioned by conversation id), else a localStorage/JSON envelope.
+   * Ignored when `storage` is `null`.
+   */
+  messageBackendFactory?: MessageBackendFactory;
 }
 
 export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatStore> {
@@ -127,18 +193,52 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       ? null
       : (() => {
           const storage = options.storage ?? defaultStorage();
-          const backend = options.messageBackend ?? defaultMessageBackend(tenantId, storage);
-          return new PersistenceManager(storage, backend, draftKey(tenantId));
+          const factory: MessageBackendFactory =
+            options.messageBackendFactory ??
+            (options.messageBackend
+              ? () => options.messageBackend!
+              : defaultMessageBackendFactory(tenantId, storage));
+          // Only the built-in factory has a pre-multi-thread store to migrate.
+          const legacyBackend =
+            options.messageBackend || options.messageBackendFactory
+              ? null
+              : defaultMessageBackend(tenantId, storage);
+          return new PersistenceManager(storage, factory, {
+            draftStorageKey: draftKey(tenantId),
+            indexStorageKey: conversationIndexKey(tenantId),
+            legacyBackend,
+          });
         })();
 
   const session = persistence
     ? resolveSession(persistence, tenantId, userId)
     : { sessionId: createId('sess'), tenantId, userId };
 
+  // Resolve the initial conversation list + active id synchronously so the
+  // store has a valid active thread before any async history load. An existing
+  // index is adopted; otherwise a fresh conversation #1 is created (its history
+  // — including any legacy single-thread data — is hydrated asynchronously).
+  const savedIndex = persistence?.loadConversationIndex() ?? null;
+  const hasSavedIndex = Boolean(savedIndex && savedIndex.summaries.length > 0);
+  const initialConversations: ConversationSummary[] = hasSavedIndex
+    ? savedIndex!.summaries
+    : [freshConversationSummary()];
+  const initialActiveId =
+    hasSavedIndex && savedIndex!.summaries.some((c) => c.id === savedIndex!.activeId)
+      ? savedIndex!.activeId
+      : initialConversations[0]!.id;
+
   let abortController: AbortController | null = null;
   // Interrupt resolutions to attach to the next run, set by `resume()` and
   // consumed once by the following `streamRun()`.
   let pendingResume: InterruptResolution[] | null = null;
+  // Frontend-action confirmations awaiting the user. `confirmResolvers` maps a
+  // paused tool-call id to the promise resolver the handler-gate is blocked on;
+  // `confirmTimers` holds its optional auto-deny timeout. `turnAborted` lets an
+  // `abort()`/`clear()` during a confirmation wait unwind the run loop.
+  const confirmResolvers = new Map<string, (decision: ConfirmDecision) => void>();
+  const confirmTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let turnAborted = false;
   // Last-persisted reference per message id. The reducer keeps unchanged
   // messages referentially identical, so a reference diff cheaply yields the
   // new / mutated messages to upsert and the removed ids to delete — an
@@ -147,15 +247,46 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
   const registry = createActionRegistry();
 
   const store = createStore<ChatStore>((set, get) => {
+    /**
+     * Refresh the active conversation's summary (auto-title, preview, recency)
+     * from its current messages and persist the index. Keeps the sidebar live
+     * and is cheap — the index is a small synchronous record.
+     */
+    const touchActiveSummary = (messages: UIMessage[]) => {
+      const activeId = get().activeConversationId;
+      const summaries = get().conversations;
+      const index = summaries.findIndex((c) => c.id === activeId);
+      if (index === -1) return;
+      const current = summaries[index]!;
+      const next: ConversationSummary = {
+        ...current,
+        // A user-set title is sticky; otherwise derive from the first user turn.
+        title: current.title ?? deriveTitle(messages),
+        preview: derivePreview(messages),
+        updatedAt: Date.now(),
+      };
+      const updated = summaries.map((c, i) => (i === index ? next : c));
+      set({ conversations: updated });
+      persistence?.saveConversationIndex({ activeId, summaries: updated });
+    };
+
     const persistMessages = () => {
-      if (!persistence) return;
       const messages = get().messages;
+      const activeId = get().activeConversationId;
       const changed = messages.filter((m) => persistedRefs.get(m.id) !== m);
       const currentIds = new Set(messages.map((m) => m.id));
       const removed = [...persistedRefs.keys()].filter((id) => !currentIds.has(id));
       persistedRefs = new Map(messages.map((m) => [m.id, m]));
       if (changed.length === 0 && removed.length === 0) return;
-      void persistence.persistMessages({ order: messages.map((m) => m.id), changed, removed });
+      // Refresh the in-memory summary (title/preview) even without a backend, so
+      // the conversation list is correct in memory-only mode too.
+      touchActiveSummary(messages);
+      if (!persistence) return;
+      void persistence.persistMessages(activeId, {
+        order: messages.map((m) => m.id),
+        changed,
+        removed,
+      });
     };
 
     /** Immutably merge a metadata patch onto the message at `index`. */
@@ -192,7 +323,9 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       try {
         const stream = transport.run(
           {
-            threadId: get().session.sessionId,
+            // A conversation is a thread: the active conversation id is the
+            // backend threadId, so each thread streams / resumes independently.
+            threadId: get().activeConversationId,
             tenantId,
             userId,
             messages: get().messages,
@@ -291,33 +424,119 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       }
     }
 
+    /** Fold a tool result into the target message (same path as a backend result). */
+    const foldToolResult = (call: PendingFrontendCall, result: unknown, isError: boolean) => {
+      set({
+        messages: applyEventToMessages(get().messages, {
+          type: AgUiEventType.ToolCallResult,
+          messageId: call.messageId,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          result,
+          isError,
+        }),
+      });
+    };
+
+    /** Resolve a pending confirmation: clear its timer + state and wake the gate. */
+    const settleConfirmation = (toolCallId: string, decision: ConfirmDecision) => {
+      const resolve = confirmResolvers.get(toolCallId);
+      if (!resolve) return;
+      confirmResolvers.delete(toolCallId);
+      const timer = confirmTimers.get(toolCallId);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        confirmTimers.delete(toolCallId);
+      }
+      set({
+        actionConfirmations: get().actionConfirmations.filter((c) => c.toolCallId !== toolCallId),
+      });
+      resolve(decision);
+    };
+
+    /** Surface an approval card for `call` and wait for the user's decision. */
+    const requestConfirmation = (
+      call: PendingFrontendCall,
+      action: FrontendAction,
+    ): Promise<ConfirmDecision> => {
+      set({
+        actionConfirmations: [
+          ...get().actionConfirmations,
+          {
+            toolCallId: call.toolCallId,
+            toolName: call.toolName,
+            args: call.args,
+            ...(action.confirmationMessage ? { message: action.confirmationMessage } : {}),
+          },
+        ],
+      });
+      return new Promise<ConfirmDecision>((resolve) => {
+        confirmResolvers.set(call.toolCallId, resolve);
+        const timeout = action.confirmationTimeoutMs ?? 0;
+        if (timeout > 0) {
+          confirmTimers.set(
+            call.toolCallId,
+            setTimeout(() => settleConfirmation(call.toolCallId, 'denied'), timeout),
+          );
+        }
+      });
+    };
+
+    /** Run a handler, failing it if it exceeds the action's `timeoutMs` (if any). */
+    const runHandler = (action: FrontendAction, args: Record<string, unknown>): Promise<unknown> => {
+      const settled = Promise.resolve().then(() => action.handler(args));
+      const timeout = action.timeoutMs ?? 0;
+      if (timeout <= 0) return settled;
+      return new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Action timed out')), timeout);
+        settled.then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
+    };
+
     /**
      * Execute every pending frontend tool call in the browser and fold each
-     * result back into the conversation (via the same reducer path as a
-     * backend result), so the next run carries it to the agent.
+     * result back into the conversation, so the next run carries it to the
+     * agent. A call flagged `requireConfirmation` first pauses on an approval
+     * card: approval runs the handler, rejection returns a declined result, and
+     * an `abort()`/`clear()` during the wait stops the turn.
      */
     async function resolveFrontendCalls(calls: PendingFrontendCall[]): Promise<void> {
       for (const call of calls) {
+        if (turnAborted) return;
         const action = registry.getAction(call.toolName);
         if (!action) continue;
+
+        if (action.requireConfirmation) {
+          const decision = await requestConfirmation(call, action);
+          if (decision === 'aborted') {
+            foldToolResult(call, { aborted: true }, true);
+            persistMessages();
+            return;
+          }
+          if (decision === 'denied') {
+            foldToolResult(call, { declined: true }, false);
+            continue;
+          }
+        }
+
         let result: unknown;
         let isError = false;
         try {
-          result = await action.handler(call.args);
+          result = await runHandler(action, call.args);
         } catch (error) {
           result = { error: (error as Error).message };
           isError = true;
         }
-        set({
-          messages: applyEventToMessages(get().messages, {
-            type: AgUiEventType.ToolCallResult,
-            messageId: call.messageId,
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            result,
-            isError,
-          }),
-        });
+        foldToolResult(call, result, isError);
       }
       persistMessages();
     }
@@ -328,6 +547,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
      * results, until the agent stops calling them or we hit the safety cap.
      */
     async function runTurn(): Promise<void> {
+      turnAborted = false;
       for (let round = 0; round < MAX_FRONTEND_TOOL_ROUNDS; round++) {
         await streamRun();
         if (get().run.status !== 'completed') return;
@@ -336,8 +556,59 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         if (pending.length === 0) return;
 
         await resolveFrontendCalls(pending);
+        // An abort during a confirmation wait stops the turn here rather than
+        // looping into another backend run.
+        if (turnAborted) return;
       }
     }
+
+    /** Deny + release every confirmation the UI is waiting on (abort / clear / teardown). */
+    const releaseConfirmations = () => {
+      turnAborted = true;
+      for (const id of [...confirmResolvers.keys()]) settleConfirmation(id, 'aborted');
+    };
+
+    /** True while a turn is in-flight: streaming, or paused on an action confirmation. */
+    const isTurnBusy = () =>
+      get().run.status === 'running' || get().actionConfirmations.length > 0;
+
+    /**
+     * Make `id` the active conversation: stop any live turn, reset transient
+     * per-thread state, persist the active pointer, then hydrate that thread's
+     * history asynchronously (guarded so a fast interaction never clobbers it).
+     * The summary for `id` must already be in `conversations`.
+     */
+    const activate = (id: string) => {
+      abortController?.abort();
+      releaseConfirmations();
+      persistedRefs = new Map();
+      set({
+        activeConversationId: id,
+        messages: [],
+        run: { status: 'idle' },
+        agentState: {},
+        artifacts: {},
+        actionConfirmations: [],
+      });
+      persistence?.saveConversationIndex({ activeId: id, summaries: get().conversations });
+      if (!persistence) return;
+      void persistence
+        .loadMessages(id)
+        .then((loaded) => {
+          if (loaded.length === 0) return;
+          if (
+            get().activeConversationId === id &&
+            get().messages.length === 0 &&
+            get().run.status === 'idle'
+          ) {
+            persistedRefs = new Map(loaded.map((m) => [m.id, m]));
+            set({ messages: loaded });
+          }
+        })
+        .catch(() => {
+          /* corrupt / unavailable thread — leave it empty */
+        });
+    };
 
     /**
      * Re-run the turn anchored at the user message at `index`: drop everything
@@ -362,15 +633,20 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       // (IndexedDB has no synchronous read).
       messages: [],
       run: { status: 'idle' },
+      conversations: initialConversations,
+      activeConversationId: initialActiveId,
       agentState: {},
       artifacts: {},
+      frontendTools: registry.actionNames(),
+      actionConfirmations: [],
 
       async sendMessage(text, extraParts = []) {
         const trimmed = text.trim();
         if (!trimmed && extraParts.length === 0) return;
-        // Block while streaming, or while a turn is paused on an interrupt —
-        // the user must resolve it (via `resume`) before a new message.
-        if (get().run.status === 'running' || get().run.status === 'interrupted') return;
+        // Block while streaming, while a turn is paused on an interrupt, or while
+        // a frontend action awaits confirmation — the user must resolve those
+        // (via `resume` / `confirmAction`) before a new message.
+        if (isTurnBusy() || get().run.status === 'interrupted') return;
 
         const parts: MessagePart[] = [];
         if (trimmed) parts.push({ type: 'text', text: trimmed });
@@ -389,6 +665,12 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
       abort() {
         abortController?.abort();
+        // Also release any confirmation the turn is blocked on so it unwinds.
+        releaseConfirmations();
+      },
+
+      confirmAction(toolCallId, approved) {
+        settleConfirmation(toolCallId, approved ? 'approved' : 'denied');
       },
 
       async resume(resolutions) {
@@ -398,23 +680,23 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       },
 
       async retryLast() {
-        if (get().run.status === 'running') return;
+        if (isTurnBusy()) return;
         const index = findLastIndex(get().messages, (m) => m.role === 'user');
         if (index === -1) return;
         await rerunFrom(index);
       },
 
       async regenerate() {
-        // Regenerating discards the current answer; block while a run is live or
-        // paused on an interrupt (the user must resolve that first).
-        if (get().run.status === 'running' || get().run.status === 'interrupted') return;
+        // Regenerating discards the current answer; block while a run is live,
+        // paused on an interrupt, or awaiting an action confirmation.
+        if (isTurnBusy() || get().run.status === 'interrupted') return;
         const index = findLastIndex(get().messages, (m) => m.role === 'user');
         if (index === -1) return;
         await rerunFrom(index);
       },
 
       async retryMessage(messageId) {
-        if (get().run.status === 'running') return;
+        if (isTurnBusy()) return;
         const messages = get().messages;
         const index = messages.findIndex((m) => m.id === messageId);
         if (index === -1 || messages[index]?.role !== 'user') return;
@@ -445,9 +727,65 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
       clear() {
         abortController?.abort();
+        releaseConfirmations();
         persistedRefs = new Map();
-        set({ messages: [], run: { status: 'idle' }, agentState: {}, artifacts: {} });
-        void persistence?.clear();
+        const activeId = get().activeConversationId;
+        // The active thread is now empty, so drop its derived title/preview too.
+        const summaries = get().conversations.map((c) =>
+          c.id === activeId ? { id: c.id, createdAt: c.createdAt, updatedAt: Date.now() } : c,
+        );
+        set({
+          messages: [],
+          run: { status: 'idle' },
+          agentState: {},
+          artifacts: {},
+          actionConfirmations: [],
+          conversations: summaries,
+        });
+        persistence?.saveConversationIndex({ activeId, summaries });
+        void persistence?.clearConversation(activeId);
+      },
+
+      newConversation() {
+        // Already on a blank thread — nothing to start.
+        if (get().messages.length === 0) return;
+        const conv = freshConversationSummary();
+        set({ conversations: [conv, ...get().conversations] });
+        activate(conv.id);
+      },
+
+      switchConversation(id) {
+        if (id === get().activeConversationId) return;
+        if (!get().conversations.some((c) => c.id === id)) return;
+        activate(id);
+      },
+
+      deleteConversation(id) {
+        const summaries = get().conversations;
+        if (!summaries.some((c) => c.id === id)) return;
+        void persistence?.clearConversation(id);
+        const remaining = summaries.filter((c) => c.id !== id);
+        if (id === get().activeConversationId) {
+          // Fall back to the most recent remaining thread, or a fresh empty one.
+          const nextSummaries = remaining.length > 0 ? remaining : [freshConversationSummary()];
+          set({ conversations: nextSummaries });
+          activate(nextSummaries[0]!.id);
+        } else {
+          set({ conversations: remaining });
+          persistence?.saveConversationIndex({
+            activeId: get().activeConversationId,
+            summaries: remaining,
+          });
+        }
+      },
+
+      renameConversation(id, title) {
+        const trimmed = title.trim();
+        const summaries = get().conversations.map((c) =>
+          c.id === id ? { ...c, title: trimmed || undefined, updatedAt: Date.now() } : c,
+        );
+        set({ conversations: summaries });
+        persistence?.saveConversationIndex({ activeId: get().activeConversationId, summaries });
       },
 
       setAgentState(next) {
@@ -463,31 +801,99 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         persistence?.saveSession(next);
       },
 
-      registerAction: registry.registerAction,
+      registerAction(action) {
+        const unregister = registry.registerAction(action);
+        // Mirror the registered names into state so renderers can tell a
+        // frontend action apart from a backend tool.
+        set({ frontendTools: registry.actionNames() });
+        return () => {
+          unregister();
+          set({ frontendTools: registry.actionNames() });
+        };
+      },
       registerContext: registry.registerContext,
     };
   });
 
-  // Hydrate persisted history asynchronously. Only adopt it if the user hasn't
-  // already started interacting (messages still empty, run idle), so a slow disk
+  // Hydrate the active conversation's history asynchronously (IndexedDB has no
+  // synchronous read). Only adopt it if the user hasn't already started
+  // interacting (messages still empty, run idle, same thread), so a slow disk
   // read never clobbers a fresh message.
   if (persistence) {
-    void persistence
-      .loadMessages()
-      .then((loaded) => {
-        if (loaded.length === 0) return;
-        const state = store.getState();
-        if (state.messages.length === 0 && state.run.status === 'idle') {
-          persistedRefs = new Map(loaded.map((m) => [m.id, m]));
-          store.setState({ messages: loaded });
+    void (async () => {
+      try {
+        const activeId = store.getState().activeConversationId;
+        let loaded = await persistence.loadMessages(activeId);
+        // First run (no saved index): adopt any pre-multi-thread single-thread
+        // history into this conversation, then retire the legacy store.
+        if (loaded.length === 0 && !hasSavedIndex) {
+          const legacy = await persistence.loadLegacyMessages();
+          if (legacy.length > 0) {
+            loaded = legacy;
+            await persistence.persistMessages(activeId, {
+              order: legacy.map((m) => m.id),
+              changed: legacy,
+              removed: [],
+            });
+            await persistence.clearLegacy();
+          }
         }
-      })
-      .catch(() => {
+
+        const state = store.getState();
+        const adoptable =
+          loaded.length > 0 &&
+          state.activeConversationId === activeId &&
+          state.messages.length === 0 &&
+          state.run.status === 'idle';
+        if (!adoptable) return;
+        persistedRefs = new Map(loaded.map((m) => [m.id, m]));
+        if (hasSavedIndex) {
+          store.setState({ messages: loaded });
+        } else {
+          // Seed the (new / migrated) conversation's summary from its history.
+          const summaries = state.conversations.map((c) =>
+            c.id === activeId
+              ? { ...c, title: c.title ?? deriveTitle(loaded), preview: derivePreview(loaded) }
+              : c,
+          );
+          store.setState({ messages: loaded, conversations: summaries });
+          persistence.saveConversationIndex({ activeId, summaries });
+        }
+      } catch {
         /* corrupt / unavailable store — start fresh */
-      });
+      }
+    })();
   }
 
   return store;
+}
+
+/** A brand-new, empty conversation summary (fresh id + timestamps). */
+function freshConversationSummary(): ConversationSummary {
+  const now = Date.now();
+  return { id: createId('conv'), createdAt: now, updatedAt: now };
+}
+
+/** Auto-title a conversation from its first user message; `undefined` when none. */
+function deriveTitle(messages: UIMessage[]): string | undefined {
+  const firstUser = messages.find((m) => m.role === 'user');
+  if (!firstUser) return undefined;
+  const text = messageText(firstUser);
+  return text ? truncate(text, TITLE_MAX) : undefined;
+}
+
+/** Short preview of the latest message for the sidebar; `undefined` when empty. */
+function derivePreview(messages: UIMessage[]): string | undefined {
+  const last = messages[messages.length - 1];
+  if (!last) return undefined;
+  const text = messageText(last);
+  return text ? truncate(text, PREVIEW_MAX) : undefined;
+}
+
+/** Collapse whitespace and clip to `max` characters with an ellipsis. */
+function truncate(text: string, max: number): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed.length > max ? `${collapsed.slice(0, max - 1).trimEnd()}…` : collapsed;
 }
 
 /**

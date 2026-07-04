@@ -1,7 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { useReducedMotion } from 'framer-motion';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, useReducedMotion } from 'framer-motion';
+import { searchMessages } from '@livechat-hub/core';
 import { useChatContext, useChatStore } from '../context';
 import { MessageBubble } from './MessageBubble';
+import { MessageSearch } from './MessageSearch';
 import { TypingIndicator } from './TypingIndicator';
 import { EmptyState } from './EmptyState';
 import { DayDivider } from './DayDivider';
@@ -25,7 +27,14 @@ function readSuggestions(state: Record<string, unknown>): string[] {
   return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : [];
 }
 
-export function MessageList() {
+export interface MessageListProps {
+  /** Whether the in-conversation search bar is open. */
+  searchOpen?: boolean;
+  /** Close the search bar (e.g. Escape inside it). */
+  onCloseSearch?: () => void;
+}
+
+export function MessageList({ searchOpen = false, onCloseSearch }: MessageListProps = {}) {
   const { store } = useChatContext();
   const messages = useChatStore((s) => s.messages);
   const status = useChatStore((s) => s.run.status);
@@ -38,6 +47,31 @@ export function MessageList() {
 
   const [atBottom, setAtBottom] = useState(true);
   const [unread, setUnread] = useState(0);
+
+  // In-conversation search state. Matches are computed purely in core; the list
+  // scrolls to the active hit and rings it (see MessageBubble `highlight`).
+  const [query, setQuery] = useState('');
+  const [activeMatch, setActiveMatch] = useState(0);
+  const matches = useMemo(() => searchMessages(messages, query), [messages, query]);
+  const safeMatch = matches.length ? Math.min(activeMatch, matches.length - 1) : 0;
+  const activeMatchId = matches[safeMatch]?.messageId;
+
+  // Reset to the first hit whenever the query changes; clear the query when the
+  // bar closes so a re-open starts fresh.
+  useEffect(() => setActiveMatch(0), [query]);
+  useEffect(() => {
+    if (!searchOpen) setQuery('');
+  }, [searchOpen]);
+
+  // Bring the active match into view (centered) as the user steps through hits.
+  useEffect(() => {
+    if (!searchOpen || !activeMatchId) return;
+    const node = scrollerRef.current?.querySelector(`[data-message-id="${CSS.escape(activeMatchId)}"]`);
+    node?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
+  }, [searchOpen, activeMatchId, reduced]);
+
+  const stepMatch = (delta: number) =>
+    setActiveMatch((i) => (matches.length ? (i + delta + matches.length) % matches.length : 0));
 
   const lastMessage = messages[messages.length - 1];
   const isStreaming = status === 'running';
@@ -81,6 +115,19 @@ export function MessageList() {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <AnimatePresence>
+        {searchOpen && (
+          <MessageSearch
+            query={query}
+            onQueryChange={setQuery}
+            matchCount={matches.length}
+            activeIndex={safeMatch}
+            onPrev={() => stepMatch(-1)}
+            onNext={() => stepMatch(1)}
+            onClose={() => onCloseSearch?.()}
+          />
+        )}
+      </AnimatePresence>
       <div ref={scrollerRef} onScroll={onScroll} className={LIST_CLASS} data-slot="message-list">
         {messages.map((message, i) => {
           const createdAt = message.metadata?.createdAt;
@@ -96,6 +143,7 @@ export function MessageList() {
                 message={message}
                 isStreaming={isStreaming && i === messages.length - 1}
                 isLast={i === messages.length - 1}
+                highlight={searchOpen && message.id === activeMatchId}
               />
             </Fragment>
           );

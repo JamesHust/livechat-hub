@@ -25,6 +25,27 @@ function fakeTransport(events: AgUiEvent[]): Transport {
   };
 }
 
+/** Let queued microtasks/timers drain (streaming a scripted run is async). */
+const flush = (ms = 0) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** A frontend tool call the agent hands to the browser, then acknowledges. */
+const CALL_THEN_ACK = (toolName: string): AgUiEvent[][] => [
+  [
+    { type: AgUiEventType.RunStarted, runId: 'r1' },
+    { type: AgUiEventType.ToolCallStart, messageId: 'a1', toolCallId: 'c1', toolName },
+    { type: AgUiEventType.ToolCallArgs, toolCallId: 'c1', delta: '{"path":"/demo/report.pdf"}' },
+    { type: AgUiEventType.ToolCallEnd, toolCallId: 'c1' },
+    { type: AgUiEventType.RunFinished, runId: 'r1' },
+  ],
+  [
+    { type: AgUiEventType.RunStarted, runId: 'r2' },
+    { type: AgUiEventType.TextMessageStart, messageId: 'a2', role: 'assistant' },
+    { type: AgUiEventType.TextMessageContent, messageId: 'a2', delta: 'Done.' },
+    { type: AgUiEventType.TextMessageEnd, messageId: 'a2' },
+    { type: AgUiEventType.RunFinished, runId: 'r2' },
+  ],
+];
+
 /** Transport that replays one event list per successive run and records inputs. */
 function scriptedTransport(runs: AgUiEvent[][]): { transport: Transport; inputs: RunInput[] } {
   const inputs: RunInput[] = [];
@@ -321,6 +342,105 @@ describe('createChatStore', () => {
     expect(messages.some((m) => m.id === 'a2')).toBe(true);
   });
 
+  it('gates a confirm-required frontend action until the user approves', async () => {
+    const { transport, inputs } = scriptedTransport(CALL_THEN_ACK('delete_file'));
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    const calls: unknown[] = [];
+    store.getState().registerAction({
+      name: 'delete_file',
+      description: 'Delete a file on the page',
+      requireConfirmation: true,
+      handler: (args) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+
+    const done = store.getState().sendMessage('delete the file');
+    await flush();
+
+    // Paused on the approval gate — the handler has NOT run, no follow-up yet.
+    expect(store.getState().actionConfirmations).toEqual([
+      { toolCallId: 'c1', toolName: 'delete_file', args: { path: '/demo/report.pdf' } },
+    ]);
+    expect(calls).toHaveLength(0);
+    expect(inputs).toHaveLength(1);
+
+    store.getState().confirmAction('c1', true);
+    await done;
+
+    // Approved: the handler ran and the result was carried back to the agent.
+    expect(calls).toEqual([{ path: '/demo/report.pdf' }]);
+    expect(store.getState().actionConfirmations).toHaveLength(0);
+    expect(inputs).toHaveLength(2);
+    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { ok: true } });
+    expect(store.getState().run.status).toBe('completed');
+  });
+
+  it('declines a confirm-required action and returns a declined result without running it', async () => {
+    const { transport, inputs } = scriptedTransport(CALL_THEN_ACK('delete_file'));
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    const calls: unknown[] = [];
+    store.getState().registerAction({
+      name: 'delete_file',
+      description: 'Delete a file on the page',
+      requireConfirmation: true,
+      handler: (args) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+
+    const done = store.getState().sendMessage('delete the file');
+    await flush();
+    store.getState().confirmAction('c1', false);
+    await done;
+
+    // Rejected: the handler never ran, but the agent still learns it was declined.
+    expect(calls).toHaveLength(0);
+    expect(store.getState().actionConfirmations).toHaveLength(0);
+    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { declined: true } });
+    expect(store.getState().run.status).toBe('completed');
+  });
+
+  it('auto-denies a confirmation that goes unanswered past its timeout', async () => {
+    const { transport, inputs } = scriptedTransport(CALL_THEN_ACK('delete_file'));
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    const calls: unknown[] = [];
+    store.getState().registerAction({
+      name: 'delete_file',
+      description: 'Delete a file on the page',
+      requireConfirmation: true,
+      confirmationTimeoutMs: 20,
+      handler: (args) => {
+        calls.push(args);
+        return { ok: true };
+      },
+    });
+
+    // Never answer: the timeout auto-denies and the turn continues on its own.
+    await store.getState().sendMessage('delete the file');
+
+    expect(calls).toHaveLength(0);
+    expect(store.getState().actionConfirmations).toHaveLength(0);
+    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { declined: true } });
+  });
+
+  it('exposes registered frontend tool names in state', () => {
+    const store = createChatStore({ transport: fakeTransport([]), tenantId: 't1', storage: null });
+    const unregister = store.getState().registerAction({
+      name: 'set_page_background',
+      description: 'Change the page background',
+      handler: () => ({ ok: true }),
+    });
+    expect(store.getState().frontendTools).toContain('set_page_background');
+    unregister();
+    expect(store.getState().frontendTools).not.toContain('set_page_background');
+  });
+
   it('ignores resume when no run is interrupted', async () => {
     const { transport, inputs } = scriptedTransport([
       [
@@ -469,5 +589,113 @@ describe('createChatStore', () => {
 
     reopened.getState().saveDraft('');
     expect(reopened.getState().loadDraft()).toBe('');
+  });
+});
+
+describe('multi-thread conversations', () => {
+  const hasText = (store: ReturnType<typeof createChatStore>, text: string) =>
+    store.getState().messages.some((m) => m.parts.some((p) => p.type === 'text' && p.text === text));
+
+  it('starts with a single active conversation', () => {
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    expect(store.getState().conversations).toHaveLength(1);
+    expect(store.getState().activeConversationId).toBe(store.getState().conversations[0]!.id);
+  });
+
+  it('creates, switches, and isolates per-thread history; auto-titles from the first message', async () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    const firstId = store.getState().activeConversationId;
+
+    await store.getState().sendMessage('hello one');
+    await flush();
+    expect(hasText(store, 'hello one')).toBe(true);
+    // The thread auto-titles from the first user message.
+    expect(store.getState().conversations.find((c) => c.id === firstId)?.title).toBe('hello one');
+
+    // A new conversation is blank and becomes active; the list grows.
+    store.getState().newConversation();
+    const secondId = store.getState().activeConversationId;
+    expect(secondId).not.toBe(firstId);
+    expect(store.getState().messages).toHaveLength(0);
+    expect(store.getState().conversations).toHaveLength(2);
+
+    // Starting a new one while already blank is a no-op (no empty-thread spam).
+    store.getState().newConversation();
+    expect(store.getState().conversations).toHaveLength(2);
+
+    await store.getState().sendMessage('hello two');
+    await flush();
+    expect(hasText(store, 'hello two')).toBe(true);
+    expect(hasText(store, 'hello one')).toBe(false);
+
+    // Switching back loads the first thread's own history.
+    store.getState().switchConversation(firstId);
+    await flush();
+    expect(store.getState().activeConversationId).toBe(firstId);
+    expect(hasText(store, 'hello one')).toBe(true);
+    expect(hasText(store, 'hello two')).toBe(false);
+  });
+
+  it('restores conversations, the active thread, and its history on reload', async () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    await store.getState().sendMessage('remember me');
+    await flush();
+    store.getState().newConversation();
+    const secondId = store.getState().activeConversationId;
+    await store.getState().sendMessage('and me too');
+    await flush();
+
+    // A fresh store (reload) over the same storage rehydrates everything.
+    const reopened = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    expect(reopened.getState().conversations).toHaveLength(2);
+    expect(reopened.getState().activeConversationId).toBe(secondId);
+    expect(hasText(reopened, 'and me too')).toBe(true);
+  });
+
+  it('deletes a conversation and falls back to a remaining thread', async () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    const firstId = store.getState().activeConversationId;
+    await store.getState().sendMessage('keep me');
+    await flush();
+    store.getState().newConversation();
+    const secondId = store.getState().activeConversationId;
+
+    // Deleting the active (second) thread falls back to the first, loading it.
+    store.getState().deleteConversation(secondId);
+    await flush();
+    expect(store.getState().conversations.some((c) => c.id === secondId)).toBe(false);
+    expect(store.getState().activeConversationId).toBe(firstId);
+    expect(hasText(store, 'keep me')).toBe(true);
+
+    // Deleting the last thread leaves a fresh empty conversation, never zero.
+    store.getState().deleteConversation(firstId);
+    await flush();
+    expect(store.getState().conversations).toHaveLength(1);
+    expect(store.getState().messages).toHaveLength(0);
+  });
+
+  it('titles from the first user message and previews the latest message', async () => {
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    const id = store.getState().activeConversationId;
+    await store.getState().sendMessage('hello there');
+    const summary = store.getState().conversations.find((c) => c.id === id)!;
+    expect(summary.title).toBe('hello there');
+    // OK_RUN's assistant reply is "Hi" — the preview tracks the newest message.
+    expect(summary.preview).toBe('Hi');
+  });
+
+  it('keeps a renamed title even as new messages arrive', async () => {
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    const id = store.getState().activeConversationId;
+    store.getState().renameConversation(id, 'My pinned title');
+    await store.getState().sendMessage('this would auto-title otherwise');
+    expect(store.getState().conversations.find((c) => c.id === id)?.title).toBe('My pinned title');
   });
 });

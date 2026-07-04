@@ -4,6 +4,8 @@ import { Header } from './Header';
 import { MessageList } from './MessageList';
 import { ErrorBar } from './ErrorBar';
 import { InterruptPrompt } from './InterruptPrompt';
+import { ActionConfirmPrompt } from './ActionConfirmPrompt';
+import { ConversationList } from './ConversationList';
 import { Composer } from './Composer';
 import { WelcomeScreen } from './WelcomeScreen';
 import { useChatStore } from '../context';
@@ -44,6 +46,14 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
   // a persisted `guestName`, so they skip straight in.
   const session = useChatStore((s) => s.session);
   const needsWelcome = !session.userId && !session.guestName;
+  // In-conversation search is offered only once there's something to search.
+  const hasMessages = useChatStore((s) => s.messages.length > 0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    if (!hasMessages) setSearchOpen(false);
+  }, [hasMessages]);
+  // Multi-thread conversation list (sheet over the panel).
+  const [conversationsOpen, setConversationsOpen] = useState(false);
   return (
     <LazyMotion features={domAnimation}>
       <m.div
@@ -82,15 +92,25 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
           onClose={onClose}
           fullscreen={isFullscreen}
           onToggleFullscreen={layout.isMobile ? undefined : () => setFullscreen((value) => !value)}
+          onToggleSearch={
+            !needsWelcome && hasMessages ? () => setSearchOpen((value) => !value) : undefined
+          }
+          searchActive={searchOpen}
+          onOpenConversations={!needsWelcome ? () => setConversationsOpen(true) : undefined}
         />
         {needsWelcome ? (
           <WelcomeScreen />
         ) : (
           <>
-            <MessageList />
+            <MessageList searchOpen={searchOpen} onCloseSearch={() => setSearchOpen(false)} />
             <ErrorBar />
             <InterruptPrompt />
+            <ActionConfirmPrompt />
             <Composer />
+            <ConversationList
+              open={conversationsOpen}
+              onClose={() => setConversationsOpen(false)}
+            />
           </>
         )}
       </m.div>

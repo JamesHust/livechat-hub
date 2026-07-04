@@ -30,6 +30,11 @@ export interface RendererContext {
    * renderer looks a `canvas` part's `component` up here. Empty by default.
    */
   components?: GenerativeComponentMap;
+  /**
+   * Names of registered frontend tools (browser-side actions). The tool
+   * renderer uses this to label a call as a page action vs. a backend tool.
+   */
+  frontendToolNames?: readonly string[];
 }
 
 export interface RendererProps<P extends MessagePart = MessagePart> {

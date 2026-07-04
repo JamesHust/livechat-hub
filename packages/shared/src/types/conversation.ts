@@ -45,6 +45,23 @@ export interface Conversation {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Lightweight metadata for one conversation in the multi-thread list — enough
+ * to render the sidebar (title, preview, recency) without loading the full
+ * message history, which lives per-conversation in the message backend. The
+ * store keeps an array of these plus the active id; the active conversation's
+ * messages hydrate into {@link RunState}'s sibling `messages`.
+ */
+export interface ConversationSummary {
+  id: string;
+  /** Auto-derived from the first user message, or set via rename. */
+  title?: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Short snippet of the latest message, shown under the title. */
+  preview?: string;
+}
+
 export interface Session {
   /** Stable end-user / device identity, used to resume conversations. */
   sessionId: string;

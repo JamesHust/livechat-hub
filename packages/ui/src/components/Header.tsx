@@ -1,4 +1,10 @@
-import { IconArrowsMaximize, IconArrowsMinimize, IconX } from '@tabler/icons-react';
+import {
+  IconArrowsMaximize,
+  IconArrowsMinimize,
+  IconMessages,
+  IconSearch,
+  IconX,
+} from '@tabler/icons-react';
 import { useChatContext } from '../context';
 import { useControlSize } from '../hooks/use-control-size';
 import { cn } from '../lib/utils';
@@ -12,13 +18,38 @@ export interface HeaderProps {
   fullscreen?: boolean;
   /** Toggle fullscreen; omit to hide the control (e.g. embedded popup hosts). */
   onToggleFullscreen?: () => void;
+  /** Toggle in-conversation search; omit to hide the control (e.g. empty chat). */
+  onToggleSearch?: () => void;
+  /** Whether the search bar is currently open. */
+  searchActive?: boolean;
+  /** Open the multi-thread conversation list; omit to hide the control. */
+  onOpenConversations?: () => void;
 }
 
-export function Header({ onClose, fullscreen, onToggleFullscreen }: HeaderProps) {
+export function Header({
+  onClose,
+  fullscreen,
+  onToggleFullscreen,
+  onToggleSearch,
+  searchActive,
+  onOpenConversations,
+}: HeaderProps) {
   const { t } = useChatContext();
   const { chromeButton, chromeIcon } = useControlSize();
   return (
-    <header className="bg-card relative z-10 flex items-center gap-3 px-4 py-3 shadow-[var(--lch-shadow-sm)]">
+    <header className="bg-card relative z-10 flex items-center gap-2 px-4 py-3 shadow-[var(--lch-shadow-sm)]">
+      {onOpenConversations && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onOpenConversations}
+          aria-label={t('conversation.title')}
+          className={cn('text-muted-foreground -ml-1', chromeButton)}
+        >
+          <IconMessages className={chromeIcon} aria-hidden="true" />
+        </Button>
+      )}
       <AgentAvatar size="md" animated />
       <div className="min-w-0 flex-1">
         <p className="m-0 truncate font-semibold tracking-tight">{t('header.title')}</p>
@@ -39,6 +70,19 @@ export function Header({ onClose, fullscreen, onToggleFullscreen }: HeaderProps)
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {onToggleSearch && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onToggleSearch}
+            aria-label={t('search.label')}
+            aria-pressed={searchActive}
+            className={cn('text-muted-foreground', chromeButton)}
+          >
+            <IconSearch className={chromeIcon} aria-hidden="true" />
+          </Button>
+        )}
         <SettingsMenu />
         {onToggleFullscreen && (
           <Button

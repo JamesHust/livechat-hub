@@ -10,6 +10,9 @@ export const SESSION_STORAGE_KEY = 'livechat-hub:session';
 /** localStorage key prefix for persisted conversations, per tenant. */
 export const CONVERSATION_STORAGE_PREFIX = 'livechat-hub:conversation';
 
+/** localStorage key prefix for the multi-thread conversation index, per tenant. */
+export const CONVERSATION_INDEX_STORAGE_PREFIX = 'livechat-hub:conversations';
+
 /** localStorage key prefix for the composer draft, per tenant. */
 export const DRAFT_STORAGE_PREFIX = 'livechat-hub:draft';
 

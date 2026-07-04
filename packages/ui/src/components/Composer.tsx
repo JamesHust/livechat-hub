@@ -31,6 +31,8 @@ function formatDuration(ms: number): string {
 export function Composer() {
   const { t, store, uploadFile } = useChatContext();
   const status = useChatStore((s) => s.run.status);
+  // A pending frontend-action confirmation also locks input until answered.
+  const awaitingConfirmation = useChatStore((s) => s.actionConfirmations.length > 0);
   // Seed from the persisted draft so a half-typed message survives reload /
   // closing the widget. Written back on every edit; cleared once sent.
   const [value, setValue] = useState(() => store.getState().loadDraft());
@@ -50,8 +52,9 @@ export function Composer() {
   const { roomy, actionButton, actionIcon } = useControlSize();
 
   const isRunning = status === 'running';
-  // A paused (interrupted) turn locks input until the user answers the prompt.
-  const isBusy = isRunning || preparing || status === 'interrupted';
+  // A paused (interrupted) turn or a pending action confirmation locks input
+  // until the user answers the prompt.
+  const isBusy = isRunning || preparing || status === 'interrupted' || awaitingConfirmation;
   const canSend = !isBusy && (value.trim().length > 0 || attachments.length > 0);
 
   const submit = async (e?: FormEvent) => {
