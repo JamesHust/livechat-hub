@@ -10,6 +10,27 @@ export type FrontendActionHandler = (args: Record<string, unknown>) => unknown |
 /** A frontend tool advertised to the agent, plus its browser-side handler. */
 export interface FrontendAction extends FrontendTool {
   handler: FrontendActionHandler;
+  /**
+   * Gate the handler behind an explicit user confirmation before it runs. Use
+   * for consequential actions (delete / purchase / send) so the agent can never
+   * trigger them without a human "yes". When set, the store surfaces an approval
+   * card (see {@link ChatState.actionConfirmations}) and only runs the handler
+   * once the user approves; a rejection returns a declined result to the agent.
+   */
+  requireConfirmation?: boolean;
+  /** Prompt shown on the confirmation card; falls back to a generic localized one. */
+  confirmationMessage?: string;
+  /**
+   * Auto-deny the confirmation if the user doesn't answer within this many ms.
+   * `0`/omitted waits indefinitely. Guards against a turn stuck on an unanswered
+   * gate.
+   */
+  confirmationTimeoutMs?: number;
+  /**
+   * Abort the handler and return an error result if it runs longer than this
+   * (ms). `0`/omitted lets it run unbounded.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -32,6 +53,8 @@ export interface ActionRegistry {
   registerAction(action: FrontendAction): () => void;
   registerContext(provider: ContextProvider): () => void;
   getAction(name: string): FrontendAction | undefined;
+  /** Names of every currently-registered action (for reactive UI mirrors). */
+  actionNames(): string[];
   /** Serializable tool specs to advertise in `RunInput.tools`. */
   toolSpecs(): FrontendTool[];
   /** Resolve every context provider to a wire item for `RunInput.context`. */
@@ -59,6 +82,10 @@ export function createActionRegistry(): ActionRegistry {
 
     getAction(name) {
       return actions.get(name);
+    },
+
+    actionNames() {
+      return [...actions.keys()];
     },
 
     toolSpecs() {

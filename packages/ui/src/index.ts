@@ -1,7 +1,8 @@
 export * from './context';
 export { ChatWindow, type ChatWindowProps } from './components/ChatWindow';
 export { ChatWidget, type ChatWidgetProps } from './components/ChatWidget';
-export { MessageList } from './components/MessageList';
+export { MessageList, type MessageListProps } from './components/MessageList';
+export { MessageSearch, type MessageSearchProps } from './components/MessageSearch';
 export { MessageBubble, type MessageBubbleProps } from './components/MessageBubble';
 export { Suggestions, type SuggestionsProps } from './components/Suggestions';
 export { Composer } from './components/Composer';
@@ -10,6 +11,9 @@ export { Header, type HeaderProps } from './components/Header';
 export { LanguageSwitcher } from './components/LanguageSwitcher';
 export { Launcher, type LauncherProps } from './components/Launcher';
 export { ErrorBar } from './components/ErrorBar';
+export { InterruptPrompt } from './components/InterruptPrompt';
+export { ActionConfirmPrompt } from './components/ActionConfirmPrompt';
+export { ConversationList, type ConversationListProps } from './components/ConversationList';
 export { TypingIndicator } from './components/TypingIndicator';
 export {
   WidgetLayoutProvider,

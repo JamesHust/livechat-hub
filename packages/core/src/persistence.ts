@@ -1,8 +1,10 @@
 import {
+  CONVERSATION_INDEX_STORAGE_PREFIX,
   CONVERSATION_STORAGE_PREFIX,
   DRAFT_STORAGE_PREFIX,
   PERSISTENCE_SCHEMA_VERSION,
   SESSION_STORAGE_KEY,
+  type ConversationSummary,
   type Session,
   type UIMessage,
 } from '@livechat-hub/shared';
@@ -40,6 +42,24 @@ export interface MessageBackend {
   load(): Promise<UIMessage[]>;
   persist(delta: PersistDelta): Promise<void>;
   clear(): Promise<void>;
+}
+
+/**
+ * Builds a {@link MessageBackend} for a given conversation id. Multi-thread
+ * persistence keeps one backend per conversation (all sharing the same
+ * IndexedDB database, partitioned by id) so switching threads loads only that
+ * thread's history.
+ */
+export type MessageBackendFactory = (conversationId: string) => MessageBackend;
+
+/**
+ * Persisted index of every conversation for a tenant (the multi-thread sidebar)
+ * plus which one is active. Small enough for synchronous storage; the messages
+ * themselves live per-conversation in a {@link MessageBackend}.
+ */
+export interface ConversationIndex {
+  activeId: string;
+  summaries: ConversationSummary[];
 }
 
 export const memoryStorage = (): StorageAdapter => {
@@ -81,8 +101,37 @@ export function defaultMessageBackend(tenantId: string, storage: StorageAdapter)
   return new LocalStorageMessageBackend(storage, conversationKey(tenantId));
 }
 
+/**
+ * Per-conversation backend factory used by the multi-thread store. Each
+ * conversation gets its own backend, namespaced by tenant + conversation id, so
+ * threads never collide (and never overwrite the pre-multi-thread single-thread
+ * store at {@link defaultMessageBackend}, which the store migrates from once).
+ */
+export function defaultMessageBackendFactory(
+  tenantId: string,
+  storage: StorageAdapter,
+): MessageBackendFactory {
+  const useIdb = typeof indexedDB !== 'undefined';
+  return (conversationId) => {
+    const scope = `${tenantId}::${conversationId}`;
+    if (useIdb) {
+      try {
+        return createIndexedDbMessageBackend(scope);
+      } catch {
+        /* IndexedDB present but unusable — fall through to localStorage */
+      }
+    }
+    return new LocalStorageMessageBackend(storage, `${conversationKey(tenantId)}:${conversationId}`);
+  };
+}
+
 function conversationKey(tenantId: string): string {
   return `${CONVERSATION_STORAGE_PREFIX}:${tenantId}`;
+}
+
+/** Storage key for the tenant's conversation index (sidebar + active id). */
+export function conversationIndexKey(tenantId: string): string {
+  return `${CONVERSATION_INDEX_STORAGE_PREFIX}:${tenantId}`;
 }
 
 /** Storage key for the composer draft, scoped per tenant. */
@@ -161,18 +210,49 @@ const MESSAGE_MIGRATIONS: Record<number, (messages: UIMessage[]) => UIMessage[]>
   0: (messages) => messages,
 };
 
+/** Options for {@link PersistenceManager}. */
+export interface PersistenceManagerOptions {
+  /** Key under which the composer draft is kept (synchronous storage). */
+  draftStorageKey?: string;
+  /** Key under which the conversation index is kept (synchronous storage). */
+  indexStorageKey?: string;
+  /**
+   * Pre-multi-thread single-conversation backend to migrate history from on
+   * first run. `null` when a custom backend is supplied (nothing to migrate).
+   */
+  legacyBackend?: MessageBackend | null;
+}
+
 /**
- * Persistence facade: the (small, synchronous) session lives in a
- * {@link StorageAdapter}; the (potentially large) conversation lives in an
- * async {@link MessageBackend}.
+ * Persistence facade for the multi-thread store: the (small, synchronous)
+ * session + conversation index live in a {@link StorageAdapter}; each
+ * conversation's (potentially large) history lives in its own async
+ * {@link MessageBackend}, created lazily by the backend factory and cached.
  */
 export class PersistenceManager {
+  private readonly backends = new Map<string, MessageBackend>();
+  private readonly draftStorageKey: string;
+  private readonly indexStorageKey: string;
+  private readonly legacyBackend: MessageBackend | null;
+
   constructor(
     private readonly storage: StorageAdapter,
-    private readonly backend: MessageBackend,
-    /** Key under which the composer draft is kept (synchronous storage). */
-    private readonly draftStorageKey = DRAFT_STORAGE_PREFIX,
-  ) {}
+    private readonly backendFactory: MessageBackendFactory,
+    options: PersistenceManagerOptions = {},
+  ) {
+    this.draftStorageKey = options.draftStorageKey ?? DRAFT_STORAGE_PREFIX;
+    this.indexStorageKey = options.indexStorageKey ?? CONVERSATION_INDEX_STORAGE_PREFIX;
+    this.legacyBackend = options.legacyBackend ?? null;
+  }
+
+  private backendFor(conversationId: string): MessageBackend {
+    let backend = this.backends.get(conversationId);
+    if (!backend) {
+      backend = this.backendFactory(conversationId);
+      this.backends.set(conversationId, backend);
+    }
+    return backend;
+  }
 
   loadSession(): Session | null {
     return readJson<Session>(this.storage, SESSION_STORAGE_KEY);
@@ -182,12 +262,37 @@ export class PersistenceManager {
     writeJson(this.storage, SESSION_STORAGE_KEY, session);
   }
 
-  loadMessages(): Promise<UIMessage[]> {
-    return this.backend.load();
+  loadConversationIndex(): ConversationIndex | null {
+    return readJson<ConversationIndex>(this.storage, this.indexStorageKey);
   }
 
-  persistMessages(delta: PersistDelta): Promise<void> {
-    return this.backend.persist(delta);
+  saveConversationIndex(index: ConversationIndex): void {
+    writeJson(this.storage, this.indexStorageKey, index);
+  }
+
+  loadMessages(conversationId: string): Promise<UIMessage[]> {
+    return this.backendFor(conversationId).load();
+  }
+
+  persistMessages(conversationId: string, delta: PersistDelta): Promise<void> {
+    return this.backendFor(conversationId).persist(delta);
+  }
+
+  /** Delete one conversation's persisted history. */
+  clearConversation(conversationId: string): Promise<void> {
+    const backend = this.backendFor(conversationId);
+    this.backends.delete(conversationId);
+    return backend.clear();
+  }
+
+  /** Read the pre-multi-thread single-conversation history (for one-time migration). */
+  loadLegacyMessages(): Promise<UIMessage[]> {
+    return this.legacyBackend?.load() ?? Promise.resolve([]);
+  }
+
+  /** Drop the legacy single-conversation store once migrated. */
+  clearLegacy(): Promise<void> {
+    return this.legacyBackend?.clear() ?? Promise.resolve();
   }
 
   /** Read the persisted composer draft (empty string when none / unavailable). */
@@ -207,11 +312,6 @@ export class PersistenceManager {
     } catch {
       /* quota exceeded / disabled — best-effort persistence */
     }
-  }
-
-  clear(): Promise<void> {
-    this.saveDraft('');
-    return this.backend.clear();
   }
 }
 

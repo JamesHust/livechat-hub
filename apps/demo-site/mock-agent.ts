@@ -30,7 +30,7 @@ export function mockAgentPlugin(path = '/agent/run'): Plugin {
 interface RunBody {
   messages?: Array<{
     role: string;
-    parts?: Array<{ type: string; text?: string; toolName?: string }>;
+    parts?: Array<{ type: string; text?: string; toolName?: string; result?: unknown }>;
   }>;
   tools?: Array<{ name: string }>;
   resume?: Array<{ id: string; value?: unknown }>;
@@ -41,6 +41,17 @@ function hasToolResult(body: RunBody, toolName: string): boolean {
   return (body.messages ?? []).some((m) =>
     m.parts?.some((p) => p.type === 'tool-result' && p.toolName === toolName),
   );
+}
+
+/** The result the browser returned for the named tool, if any (last wins). */
+function toolResultFor(body: RunBody, toolName: string): unknown {
+  let result: unknown;
+  for (const m of body.messages ?? []) {
+    for (const p of m.parts ?? []) {
+      if (p.type === 'tool-result' && p.toolName === toolName) result = p.result;
+    }
+  }
+  return result;
 }
 
 /** Did the user approve the interrupt resolution? */
@@ -113,6 +124,38 @@ async function streamMockRun(
     const reply = approved
       ? 'Done — the file has been deleted (pretend!). ✅'
       : 'No problem — I left everything as is.';
+    for (const word of reply.split(' ')) {
+      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
+      await sleep(45);
+    }
+    send({ type: 'TEXT_MESSAGE_END', messageId });
+    send({ type: 'RUN_FINISHED', runId });
+    res.end();
+    return;
+  }
+
+  // Frontend-action confirmation (client-side HITL): deleting the note is a
+  // *consequential* browser action. The agent calls the `delete_note` frontend
+  // tool and finishes without a result; the widget shows an approval card
+  // (requireConfirmation) and only runs the handler once the user approves,
+  // then starts a follow-up run carrying the result — which lands here.
+  if (/\bnote\b/i.test(prompt)) {
+    const result = toolResultFor(body, 'delete_note');
+    if (result === undefined) {
+      const toolCallId = `call_${Date.now()}`;
+      send({ type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'delete_note' });
+      send({ type: 'TOOL_CALL_ARGS', toolCallId, delta: '{}' });
+      send({ type: 'TOOL_CALL_END', toolCallId });
+      send({ type: 'RUN_FINISHED', runId });
+      res.end();
+      return;
+    }
+    const declined =
+      typeof result === 'object' && result !== null && (result as { declined?: unknown }).declined;
+    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
+    const reply = declined
+      ? 'No problem — I left the note in place.'
+      : 'Done — I removed the pinned note for you. 🗑️';
     for (const word of reply.split(' ')) {
       send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
       await sleep(45);
@@ -212,9 +255,9 @@ async function streamMockRun(
 /** Contextual follow-up suggestions offered after an answer. */
 function suggestionsFor(prompt: string): string[] {
   if (/weather/i.test(prompt)) {
-    return ['What about tomorrow?', 'Change the background', 'Thanks!'];
+    return ['What about tomorrow?', 'Change the background', 'Delete the note'];
   }
-  return ['What is the weather?', 'Change the background', 'Delete a file'];
+  return ['What is the weather?', 'Change the background', 'Delete the note'];
 }
 
 function buildReply(prompt: string): string {
@@ -227,7 +270,8 @@ function buildReply(prompt: string): string {
     'This is a **mock** AG-UI stream proving the end-to-end vertical slice: ' +
     'SDK → Shadow DOM → core store → renderers → UI. Try asking about the ' +
     '`weather` (backend tool-call), ask me to **change the background** (a ' +
-    '_frontend_ tool in your browser), or ask me to **delete a file** (a ' +
+    '_frontend_ tool in your browser), **delete the note** (a frontend action ' +
+    'that asks for confirmation first), or **delete a file** (a backend ' +
     'human-in-the-loop approval step).'
   );
 }

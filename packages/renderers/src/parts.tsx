@@ -11,13 +11,31 @@ import type {
   ToolResultPart,
   VideoPart,
 } from '@livechat-hub/shared';
-import { IconAlertTriangle, IconCheck, IconFile, IconPuzzle, IconTool } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconClick,
+  IconFile,
+  IconLoader2,
+  IconPuzzle,
+  IconTool,
+} from '@tabler/icons-react';
 import { renderMarkdown } from './markdown';
 import type { RendererProps } from './types';
 
 // Renderers are styled via plain `lch-*` classes (Tailwind does not scan this
 // package), so icons take an explicit pixel size and inherit `currentColor`.
 const ICON_SIZE = 16;
+
+/** `set_page_background` → `Set page background` — a readable label for a tool. */
+function humanizeToolName(name: string): string {
+  const spaced = name
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim();
+  if (!spaced) return name;
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
 
 export function TextRenderer({ part }: RendererProps<TextPart>) {
   return <div className="lch-part lch-markdown">{renderMarkdown(part.text)}</div>;
@@ -32,16 +50,48 @@ export function ReasoningRenderer({ part, context }: RendererProps<ReasoningPart
   );
 }
 
+/**
+ * Tool-call card. Distinguishes a browser-side **frontend action** (labelled and
+ * given a distinct icon) from a backend tool, and reflects lifecycle state as a
+ * status icon — spinner while running, check when its result is in, alert on
+ * error. Arguments live in a collapsed `<details>` instead of a raw dump so the
+ * card reads as an action, not JSON.
+ */
 export function ToolCallRenderer({ part, context }: RendererProps<ToolCallPart>) {
+  const isFrontend = context.frontendToolNames?.includes(part.toolName) ?? false;
+  const running = part.state === 'partial' || part.state === 'input-available';
+  const errored = part.state === 'error';
+  const label = humanizeToolName(part.toolName);
   const args = typeof part.args === 'string' ? part.args : JSON.stringify(part.args, null, 2);
+  const hasArgs = Boolean(args) && args !== '""' && args !== '{}' && args.trim() !== '';
+  const kindLabel = context.t(isFrontend ? 'message.pageAction' : 'message.toolCall');
+
   return (
-    <div className="lch-part lch-tool">
-      <div className="lch-tool__head" title={context.t('message.toolCall')}>
-        <IconTool size={ICON_SIZE} aria-hidden="true" />
-        <span>{part.toolName}</span>
-        <span>· {part.state}</span>
+    <div
+      className="lch-part lch-tool"
+      data-error={errored ? 'true' : undefined}
+      data-running={running ? 'true' : undefined}
+    >
+      <div className="lch-tool__head" title={kindLabel}>
+        {errored ? (
+          <IconAlertTriangle size={ICON_SIZE} aria-hidden="true" />
+        ) : running ? (
+          <IconLoader2 className="lch-spin" size={ICON_SIZE} aria-hidden="true" />
+        ) : (
+          <IconCheck size={ICON_SIZE} aria-hidden="true" />
+        )}
+        <span className="lch-tool__name">{label}</span>
+        <span className="lch-tool__badge">
+          {isFrontend ? <IconClick size={13} aria-hidden="true" /> : <IconTool size={13} aria-hidden="true" />}
+          {kindLabel}
+        </span>
       </div>
-      {args && args !== '""' && <pre>{args}</pre>}
+      {hasArgs && (
+        <details className="lch-tool__args">
+          <summary>{context.t('message.toolArgs')}</summary>
+          <pre>{args}</pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -57,7 +107,7 @@ export function ToolResultRenderer({ part, context }: RendererProps<ToolResultPa
         ) : (
           <IconCheck size={ICON_SIZE} aria-hidden="true" />
         )}
-        <span>{part.toolName}</span>
+        <span className="lch-tool__name">{humanizeToolName(part.toolName)}</span>
       </div>
       <pre>{result}</pre>
     </div>

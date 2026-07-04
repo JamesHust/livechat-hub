@@ -16,7 +16,7 @@ const widget = LiveChatHub.init({
   locale: 'en',
   defaultOpen: true,
   // Suggested prompts shown on the empty state — click one to start chatting.
-  suggestions: ['What is the weather?', 'Change the background', 'Delete a file'],
+  suggestions: ['What is the weather?', 'Change the background', 'Delete the note'],
   // Frontend tools: the agent can act on THIS page, not just reply. Ask the
   // widget to "change the background" to see the agent call this in the browser.
   actions: [
@@ -32,6 +32,22 @@ const widget = LiveChatHub.init({
         document.body.style.backgroundColor = String(color);
         line(`frontend action → set_page_background(${String(color)})`);
         return { ok: true, applied: color };
+      },
+    },
+    {
+      // A *consequential* frontend action: gated by requireConfirmation, so the
+      // widget shows an approval card before the handler ever runs (HITL for
+      // browser-side actions). Ask the widget to "delete the note".
+      name: 'delete_note',
+      description: 'Delete the pinned note from the demo page. Args: {}',
+      parameters: { type: 'object', properties: {} },
+      requireConfirmation: true,
+      confirmationMessage: 'Delete the pinned note from the page? This cannot be undone.',
+      handler: () => {
+        const note = document.getElementById('demo-note');
+        note?.remove();
+        line('frontend action → delete_note (approved)');
+        return { ok: true, deleted: Boolean(note) };
       },
     },
   ],

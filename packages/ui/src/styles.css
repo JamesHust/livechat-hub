@@ -168,20 +168,62 @@
     gap: 6px;
     align-items: center;
     color: var(--lch-text-muted);
-    font-family: var(--lch-font-mono);
     font-size: 0.92em;
   }
   .lch-tool__head svg {
     flex-shrink: 0;
   }
+  /* The action/tool name reads as a label (not mono), and stays legible even
+   * when the head tints to a status color. */
+  .lch-tool__name {
+    min-width: 0;
+    font-weight: 600;
+    color: var(--lch-text);
+    overflow-wrap: anywhere;
+  }
+  /* Pill tagging the call as a page action vs. a backend tool. */
+  .lch-tool__badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--lch-surface);
+    color: var(--lch-text-muted);
+    font-size: 0.82em;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .lch-tool[data-running='true'] .lch-tool__head {
+    color: var(--lch-primary);
+  }
   .lch-tool[data-error='true'] .lch-tool__head {
     color: var(--lch-danger);
+  }
+  .lch-tool__args {
+    margin-top: 6px;
+  }
+  .lch-tool__args summary {
+    cursor: pointer;
+    color: var(--lch-text-muted);
+    font-size: 0.85em;
+    list-style: revert;
   }
   .lch-tool pre {
     margin: 6px 0 0;
     font-family: var(--lch-font-mono);
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  /* Lifecycle spinner for a running tool call; still under reduced motion. */
+  .lch-spin {
+    animation: lch-spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .lch-spin {
+      animation: none;
+    }
   }
   .lch-media {
     max-width: 100%;
@@ -286,6 +328,11 @@
   50% {
     transform: scale(1.1);
     opacity: 1;
+  }
+}
+@keyframes lch-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

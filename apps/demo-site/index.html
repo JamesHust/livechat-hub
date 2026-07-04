@@ -43,6 +43,16 @@
         </button>
       </div>
 
+      <!-- A demo artifact the agent can act on via a *consequential* frontend
+           action. Asking the widget to "delete the note" calls a browser-side
+           tool guarded by requireConfirmation — the widget asks before running. -->
+      <div id="demo-note" class="mt-8 rounded-xl border border-amber-300 bg-amber-50 p-4">
+        <p class="m-0 text-sm font-semibold text-amber-900">📌 Pinned note</p>
+        <p class="m-0 mt-1 text-sm text-amber-800">
+          Ask the assistant to <strong>delete the note</strong> — it will confirm first.
+        </p>
+      </div>
+
       <pre
         id="log"
         class="mt-8 h-48 overflow-auto rounded-lg bg-slate-900 p-4 font-mono text-xs text-emerald-300"

@@ -15,15 +15,30 @@ Content-Type: application/json
 
 ```jsonc
 {
-  "threadId": "sess_…", // stable per end-user session
+  "threadId": "conv_…", // the active conversation id — one thread per conversation
   "tenantId": "tenant_123",
   "userId": "optional",
   "messages": [
     /* UIMessage[] — full conversation so far */
   ],
+  "tools": [
+    /* FrontendTool[] — browser-side tools the agent may call (see below) */
+  ],
+  "context": [
+    /* ContextItem[] — live host-page context ({ description, value }) */
+  ],
+  "resume": [
+    /* InterruptResolution[] — present only when resuming a paused run (see below) */
+  ],
+  "state": {}, // shared agent state the frontend owns (mirrored via STATE_*)
   "metadata": {},
 }
 ```
+
+> **Threads.** `threadId` is the **active conversation id**, not a per-session
+> singleton — the widget is multi-thread, so a user has several conversations and
+> switches between them. Key any server-side run/resume state by `threadId` so
+> each conversation streams and resumes independently.
 
 ### Response
 
@@ -67,6 +82,41 @@ ids must be **stable across a reconnect** (see _Resilience_ below).
 
 The exact TypeScript shapes are the source of truth — see
 [`packages/transport/src/events.ts`](../packages/transport/src/events.ts).
+
+## Human-in-the-loop (interrupts)
+
+An agent can pause mid-run to ask the user for approval or input (e.g. "Allow
+sending this email?"). Finish the run with an **interrupt outcome** instead of a
+plain `RUN_FINISHED`:
+
+```jsonc
+{
+  "type": "RUN_FINISHED",
+  "runId": "run_1",
+  "outcome": {
+    "type": "interrupt",
+    "interrupts": [
+      { "id": "int_1", "kind": "approval", "message": "Allow sending email?", "value": { /* … */ } }
+      // kind: "input" prompts for free text instead of accept/reject
+    ]
+  }
+}
+```
+
+The run enters `interrupted`; the widget shows an approval/input card and, once
+the user answers, repeats the `POST` with `resume: InterruptResolution[]`
+(`{ id, value }` per open interrupt — e.g. `{ approved: true }` or `{ text }`).
+Resume the same `threadId` and continue the turn.
+
+## Frontend tools (browser-side actions)
+
+`tools` advertises actions the agent can run **in the user's browser** (navigate,
+change the page, delete something…). To invoke one, emit the normal
+`TOOL_CALL_*` events with its `toolName` and finish the run **without** a
+`TOOL_CALL_RESULT`. The client executes the handler (optionally gating a
+consequential one behind a user confirmation) and starts a **follow-up run** with
+the tool's `tool-result` already in `messages` — read it and continue. This is
+the same wire shape as a backend tool; only the missing result distinguishes it.
 
 ## Resilience & reconnection
 

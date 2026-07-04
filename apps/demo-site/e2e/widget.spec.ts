@@ -34,9 +34,9 @@ test('streams a full tool-call lifecycle for the weather prompt', async ({ page 
   await sendMessage(page, 'What is the weather?');
 
   // RUN_STARTED → TOOL_CALL_* → TOOL_CALL_RESULT → TEXT deltas → RUN_FINISHED.
-  // The tool call surfaces its name, then the tool-informed answer streams in;
-  // seeing the final answer proves the whole lifecycle reached completion.
-  await expect(widget(page).getByText(/get_weather/i)).toBeVisible({ timeout: 15_000 });
+  // The tool call surfaces its (humanized) name, then the tool-informed answer
+  // streams in; seeing the final answer proves the whole lifecycle completed.
+  await expect(widget(page).getByText(/get weather/i).first()).toBeVisible({ timeout: 15_000 });
   // "…and sunny" is unique to the streamed answer (the tool-result JSON says
   // "condition": "Sunny", which /sunny/ would also match).
   await expect(widget(page).getByText(/and sunny/i)).toBeVisible({ timeout: 15_000 });

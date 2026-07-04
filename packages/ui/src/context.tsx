@@ -233,6 +233,11 @@ export function useChatActions() {
     retryMessage: state.retryMessage,
     regenerate: state.regenerate,
     setFeedback: state.setFeedback,
+    confirmAction: state.confirmAction,
     clear: state.clear,
+    newConversation: state.newConversation,
+    switchConversation: state.switchConversation,
+    deleteConversation: state.deleteConversation,
+    renameConversation: state.renameConversation,
   };
 }
