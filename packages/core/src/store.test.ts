@@ -116,18 +116,51 @@ describe('createChatStore', () => {
     ]);
   });
 
-  it('keeps ARTIFACT_UPDATE payloads in state keyed by id', async () => {
+  it('keeps ARTIFACT_UPDATE payloads (with title) in state keyed by id', async () => {
     const transport = fakeTransport([
       { type: AgUiEventType.RunStarted, runId: 'r1' },
       { type: AgUiEventType.ArtifactUpdate, artifactId: 'doc1', kind: 'markdown', payload: '# v1' },
-      { type: AgUiEventType.ArtifactUpdate, artifactId: 'doc1', kind: 'markdown', payload: '# v2' },
+      {
+        type: AgUiEventType.ArtifactUpdate,
+        artifactId: 'doc1',
+        kind: 'markdown',
+        title: 'Report',
+        payload: '# v2',
+      },
       { type: AgUiEventType.RunFinished, runId: 'r1' },
     ]);
     const store = createChatStore({ transport, tenantId: 't1', storage: null });
     await store.getState().sendMessage('make a doc');
 
     const artifact = store.getState().artifacts['doc1'];
-    expect(artifact).toMatchObject({ id: 'doc1', kind: 'markdown', payload: '# v2' });
+    expect(artifact).toMatchObject({
+      id: 'doc1',
+      kind: 'markdown',
+      payload: '# v2',
+      title: 'Report',
+    });
+  });
+
+  it('renders a CUSTOM_UI event as a canvas message part (generative UI)', async () => {
+    const transport = fakeTransport([
+      { type: AgUiEventType.RunStarted, runId: 'r1' },
+      { type: AgUiEventType.TextMessageStart, messageId: 'a1', role: 'assistant' },
+      {
+        type: AgUiEventType.CustomUi,
+        messageId: 'a1',
+        component: 'bar_chart',
+        props: { bars: [{ label: 'Mon', value: 3 }] },
+      },
+      { type: AgUiEventType.RunFinished, runId: 'r1' },
+    ]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('show me a chart');
+
+    expect(store.getState().messages[1]?.parts).toContainEqual({
+      type: 'canvas',
+      component: 'bar_chart',
+      props: { bars: [{ label: 'Mon', value: 3 }] },
+    });
   });
 
   it('errors an orphaned tool call when the run ends without a result', async () => {
@@ -373,7 +406,9 @@ describe('createChatStore', () => {
     expect(calls).toEqual([{ path: '/demo/report.pdf' }]);
     expect(store.getState().actionConfirmations).toHaveLength(0);
     expect(inputs).toHaveLength(2);
-    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    const forwarded = inputs[1]!.messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === 'tool-result');
     expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { ok: true } });
     expect(store.getState().run.status).toBe('completed');
   });
@@ -400,7 +435,9 @@ describe('createChatStore', () => {
     // Rejected: the handler never ran, but the agent still learns it was declined.
     expect(calls).toHaveLength(0);
     expect(store.getState().actionConfirmations).toHaveLength(0);
-    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    const forwarded = inputs[1]!.messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === 'tool-result');
     expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { declined: true } });
     expect(store.getState().run.status).toBe('completed');
   });
@@ -425,7 +462,9 @@ describe('createChatStore', () => {
 
     expect(calls).toHaveLength(0);
     expect(store.getState().actionConfirmations).toHaveLength(0);
-    const forwarded = inputs[1]!.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool-result');
+    const forwarded = inputs[1]!.messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === 'tool-result');
     expect(forwarded).toMatchObject({ toolCallId: 'c1', result: { declined: true } });
   });
 
@@ -594,10 +633,16 @@ describe('createChatStore', () => {
 
 describe('multi-thread conversations', () => {
   const hasText = (store: ReturnType<typeof createChatStore>, text: string) =>
-    store.getState().messages.some((m) => m.parts.some((p) => p.type === 'text' && p.text === text));
+    store
+      .getState()
+      .messages.some((m) => m.parts.some((p) => p.type === 'text' && p.text === text));
 
   it('starts with a single active conversation', () => {
-    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
     expect(store.getState().conversations).toHaveLength(1);
     expect(store.getState().activeConversationId).toBe(store.getState().conversations[0]!.id);
   });
@@ -682,7 +727,11 @@ describe('multi-thread conversations', () => {
   });
 
   it('titles from the first user message and previews the latest message', async () => {
-    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
     const id = store.getState().activeConversationId;
     await store.getState().sendMessage('hello there');
     const summary = store.getState().conversations.find((c) => c.id === id)!;
@@ -692,10 +741,89 @@ describe('multi-thread conversations', () => {
   });
 
   it('keeps a renamed title even as new messages arrive', async () => {
-    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage: null });
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
     const id = store.getState().activeConversationId;
     store.getState().renameConversation(id, 'My pinned title');
     await store.getState().sendMessage('this would auto-title otherwise');
     expect(store.getState().conversations.find((c) => c.id === id)?.title).toBe('My pinned title');
+  });
+
+  it('identify() sets the session userId and forwards it on the next run', async () => {
+    const { transport, inputs } = scriptedTransport([OK_RUN]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+
+    store.getState().identify({ userId: 'u-42' });
+    expect(store.getState().session.userId).toBe('u-42');
+
+    await store.getState().sendMessage('hi');
+    expect(inputs[0]?.userId).toBe('u-42');
+  });
+
+  it('identify() forwards name / email / traits under RunInput.metadata.user', async () => {
+    const { transport, inputs } = scriptedTransport([OK_RUN]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+
+    store
+      .getState()
+      .identify({ userId: 'u1', name: 'Ada', email: 'ada@x.io', traits: { plan: 'pro' } });
+    await store.getState().sendMessage('hi');
+
+    expect(inputs[0]?.metadata).toEqual({
+      user: { name: 'Ada', email: 'ada@x.io', traits: { plan: 'pro' } },
+    });
+  });
+
+  it('omits identity metadata entirely when no identity is set', async () => {
+    const { transport, inputs } = scriptedTransport([OK_RUN]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hi');
+    expect(inputs[0]?.metadata).toBeUndefined();
+  });
+
+  it('addProactiveMessage() appends an assistant nudge without starting a run', async () => {
+    const { transport, inputs } = scriptedTransport([OK_RUN]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+
+    store.getState().addProactiveMessage('  Need a hand?  ');
+    const messages = store.getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: 'assistant',
+      parts: [{ type: 'text', text: 'Need a hand?', state: 'done' }],
+      metadata: { proactive: true },
+    });
+    // No run was triggered.
+    expect(inputs).toHaveLength(0);
+    expect(store.getState().run.status).toBe('idle');
+    // Empty text is a no-op.
+    store.getState().addProactiveMessage('   ');
+    expect(store.getState().messages).toHaveLength(1);
+  });
+
+  it('drives the CSAT prompt lifecycle: request → submit → dismiss', () => {
+    const store = createChatStore({ transport: fakeTransport([]), tenantId: 't1', storage: null });
+    expect(store.getState().csat.status).toBe('idle');
+
+    store.getState().requestCsat();
+    expect(store.getState().csat.status).toBe('requested');
+
+    // Out-of-range ratings are ignored.
+    store.getState().submitCsat(9);
+    expect(store.getState().csat.status).toBe('requested');
+
+    store.getState().submitCsat(4, '  great help ');
+    expect(store.getState().csat).toEqual({
+      status: 'submitted',
+      result: { rating: 4, comment: 'great help' },
+    });
+
+    store.getState().dismissCsat();
+    expect(store.getState().csat.status).toBe('idle');
+    // The submitted result is retained after dismissal.
+    expect(store.getState().csat.result).toEqual({ rating: 4, comment: 'great help' });
   });
 });

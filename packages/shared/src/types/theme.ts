@@ -20,6 +20,8 @@ export interface ThemeTokens {
   'primary-soft': string;
   /** Positive / online status (presence dot, confirmations). */
   success: string;
+  /** Caution / away status (presence dot, soft warnings). */
+  warning: string;
   background: string;
   surface: string;
   'surface-muted': string;

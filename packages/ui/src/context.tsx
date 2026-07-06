@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -26,6 +27,7 @@ import {
 } from '@livechat-hub/shared';
 import { applyThemeToElement, resolveTheme } from '@livechat-hub/themes';
 import {
+  resolveComponents,
   resolveRenderers,
   type GenerativeComponentMap,
   type RendererMap,
@@ -150,6 +152,17 @@ export function ChatProvider({
     writeStored(THEME_STORAGE_KEY, next);
   }, []);
 
+  // Adopt a host-driven locale change (`updateConfig({ locale })`) after mount.
+  // Skipped on the first render so a persisted end-user choice (seeded in the
+  // state initializer) still wins on first paint; only a genuine later change to
+  // the `locale` prop re-seeds — it does not overwrite the persisted preference.
+  const seededLocaleRef = useRef(initialLocale);
+  useEffect(() => {
+    if (seededLocaleRef.current === initialLocale) return;
+    seededLocaleRef.current = initialLocale;
+    setLocaleState(initialLocale);
+  }, [initialLocale]);
+
   // Apply the resolved theme to the host element, re-applying live when the OS
   // scheme changes while in `auto`. `useLayoutEffect` so a persisted choice that
   // differs from the host's initial seed lands before the first paint (no flash).
@@ -168,7 +181,12 @@ export function ChatProvider({
   }, [themeMode, themeOverrides]);
 
   const resolvedRenderers = useMemo(() => resolveRenderers(renderers), [renderers]);
-  const resolvedComponents = useMemo<GenerativeComponentMap>(() => components ?? {}, [components]);
+  // Built-in generative components (bar_chart, …) merged under host overrides,
+  // so an agent can render them by name without the host registering anything.
+  const resolvedComponents = useMemo<GenerativeComponentMap>(
+    () => resolveComponents(components),
+    [components],
+  );
   const t = useMemo(() => createTranslator(locale, strings), [locale, strings]);
   const resolvedSuggestions = useMemo(() => suggestions ?? [], [suggestions]);
 

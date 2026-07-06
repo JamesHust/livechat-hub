@@ -5,6 +5,10 @@ import type { Plugin } from 'vite';
  * Dev-only mock of the Go backend (`livechat-api`). Implements the AG-UI SSE
  * contract so the embedded widget streams realistically without any AI
  * provider. Mounted as Vite middleware at POST /agent/run.
+ *
+ * The scenario engine ({@link runScenario}) is transport-agnostic — it yields
+ * AG-UI events — so the WebSocket mock ([mock-ws.ts](./mock-ws.ts)) replays the
+ * exact same conversations over a socket.
  */
 export function mockAgentPlugin(path = '/agent/run'): Plugin {
   return {
@@ -27,7 +31,7 @@ export function mockAgentPlugin(path = '/agent/run'): Plugin {
   };
 }
 
-interface RunBody {
+export interface RunBody {
   messages?: Array<{
     role: string;
     parts?: Array<{ type: string; text?: string; toolName?: string; result?: unknown }>;
@@ -63,6 +67,234 @@ function isApproved(value: unknown): boolean {
   );
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The transport-agnostic scenario engine: yields the AG-UI events for a run,
+ * pacing itself with `await sleep(...)` between deltas. Both the SSE middleware
+ * and the WebSocket mock consume this — the only SSE-specific behavior (the
+ * mid-stream fault injection) stays in {@link streamMockRun}.
+ */
+export async function* runScenario(body: RunBody): AsyncGenerator<Record<string, unknown>> {
+  const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === 'user');
+  const prompt = lastUser?.parts?.find((p) => p.type === 'text')?.text ?? '';
+  const runId = `run_${Date.now()}`;
+  const messageId = `msg_${Date.now()}`;
+
+  yield { type: 'RUN_STARTED', runId };
+  await sleep(250);
+
+  // Human-in-the-loop: a resumed run carries the user's interrupt resolution.
+  if (body.resume?.length) {
+    const approved = body.resume.some((r) => isApproved(r.value));
+    yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+    const reply = approved
+      ? 'Done — the file has been deleted (pretend!). ✅'
+      : 'No problem — I left everything as is.';
+    for (const word of reply.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+      await sleep(45);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId };
+    yield { type: 'RUN_FINISHED', runId };
+    return;
+  }
+
+  // Frontend-action confirmation (client-side HITL): the agent calls the
+  // `delete_note` frontend tool and finishes without a result; the widget shows
+  // an approval card and only runs the handler once the user approves.
+  if (/\bnote\b/i.test(prompt)) {
+    const result = toolResultFor(body, 'delete_note');
+    if (result === undefined) {
+      const toolCallId = `call_${Date.now()}`;
+      yield { type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'delete_note' };
+      yield { type: 'TOOL_CALL_ARGS', toolCallId, delta: '{}' };
+      yield { type: 'TOOL_CALL_END', toolCallId };
+      yield { type: 'RUN_FINISHED', runId };
+      return;
+    }
+    const declined =
+      typeof result === 'object' && result !== null && (result as { declined?: unknown }).declined;
+    yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+    const reply = declined
+      ? 'No problem — I left the note in place.'
+      : 'Done — I removed the pinned note for you. 🗑️';
+    for (const word of reply.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+      await sleep(45);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId };
+    yield { type: 'RUN_FINISHED', runId };
+    return;
+  }
+
+  // Generative UI + artifact panel (Sprint 5.4): stream a chart canvas part into
+  // the message AND publish a live document artifact via ARTIFACT_UPDATE, which
+  // the widget surfaces in its artifact panel.
+  if (/\b(chart|report|dashboard|artifact)\b/i.test(prompt)) {
+    yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+    for (const word of 'Here is a quick sales snapshot — full report in the panel. 📊'.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+      await sleep(40);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId };
+    // A generative-UI part rendered by the built-in `bar_chart` component — no
+    // host registration needed (see packages/renderers/src/components.tsx).
+    yield {
+      type: 'CUSTOM_UI',
+      messageId,
+      component: 'bar_chart',
+      props: {
+        title: 'Weekly sales',
+        unit: 'k',
+        bars: [
+          { label: 'Mon', value: 12 },
+          { label: 'Tue', value: 19 },
+          { label: 'Wed', value: 9 },
+          { label: 'Thu', value: 22 },
+          { label: 'Fri', value: 27 },
+        ],
+      },
+    };
+    // Artifact streamed out-of-band, updated live (v1 → v2) into the panel.
+    const artifactId = 'report_sales';
+    yield {
+      type: 'ARTIFACT_UPDATE',
+      artifactId,
+      kind: 'markdown',
+      title: 'Weekly sales report',
+      payload: '# Weekly sales\n\nCompiling the latest figures…',
+    };
+    await sleep(500);
+    yield {
+      type: 'ARTIFACT_UPDATE',
+      artifactId,
+      kind: 'markdown',
+      title: 'Weekly sales report',
+      payload:
+        '# Weekly sales\n\n**Total:** 89k this week (+14% WoW).\n\n' +
+        '- Best day: **Friday** (27k)\n- Slowest: **Wednesday** (9k)\n\n' +
+        'Momentum into the weekend looks strong.',
+    };
+    yield { type: 'RUN_FINISHED', runId };
+    return;
+  }
+
+  // Agent handoff (Sprint 5.1): AI → human. Presence + handoff state are
+  // published into the shared agent state (STATE_DELTA — no bespoke events); the
+  // header + handoff banner read them. Uses deltas so other state is preserved.
+  if (
+    /human|representative|real person|talk to (a|an|someone|somebody)|\bsupport\b/i.test(prompt)
+  ) {
+    yield {
+      type: 'STATE_DELTA',
+      delta: [
+        { op: 'add', path: '/handoff', value: { status: 'requested' } },
+        { op: 'add', path: '/presence', value: 'away' },
+      ],
+    };
+    yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+    for (const word of 'Sure — connecting you to a team member now.'.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+      await sleep(45);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId };
+    await sleep(700);
+    yield {
+      type: 'STATE_DELTA',
+      delta: [
+        { op: 'add', path: '/handoff', value: { status: 'connected', agentName: 'Mai' } },
+        { op: 'add', path: '/presence', value: 'online' },
+      ],
+    };
+    const humanMessageId = `msg_${Date.now()}_h`;
+    yield { type: 'TEXT_MESSAGE_START', messageId: humanMessageId, role: 'assistant' };
+    for (const word of 'Hi, this is Mai from the team — how can I help? 👋'.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId: humanMessageId, delta: word + ' ' };
+      await sleep(45);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId: humanMessageId };
+    yield { type: 'RUN_FINISHED', runId };
+    return;
+  }
+
+  // Human-in-the-loop trigger: a destructive request pauses for approval.
+  if (/delete|remove|wipe/i.test(prompt)) {
+    yield {
+      type: 'RUN_FINISHED',
+      runId,
+      outcome: {
+        type: 'interrupt',
+        interrupts: [
+          {
+            id: `int_${Date.now()}`,
+            kind: 'approval',
+            message: 'Deleting report.pdf is permanent. Do you want me to proceed?',
+            value: { action: 'delete_file', path: '/demo/report.pdf' },
+          },
+        ],
+      },
+    };
+    return;
+  }
+
+  // Frontend tool hand-off: when asked about the page background, call the
+  // browser-side `set_page_background` tool and finish WITHOUT a result.
+  if (/background|backdrop/i.test(prompt)) {
+    if (!hasToolResult(body, 'set_page_background')) {
+      const toolCallId = `call_${Date.now()}`;
+      yield { type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'set_page_background' };
+      for (const chunk of ['{"color":', '"#0f766e"}']) {
+        yield { type: 'TOOL_CALL_ARGS', toolCallId, delta: chunk };
+        await sleep(120);
+      }
+      yield { type: 'TOOL_CALL_END', toolCallId };
+      yield { type: 'RUN_FINISHED', runId };
+      return;
+    }
+    yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+    for (const word of 'Done — I updated the page background for you. ✨'.split(' ')) {
+      yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+      await sleep(45);
+    }
+    yield { type: 'TEXT_MESSAGE_END', messageId };
+    yield { type: 'RUN_FINISHED', runId };
+    return;
+  }
+
+  // Demonstrate a tool-call lifecycle when the user mentions "weather".
+  if (/weather/i.test(prompt)) {
+    const toolCallId = `call_${Date.now()}`;
+    yield { type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'get_weather' };
+    for (const chunk of ['{"city":', '"Hanoi"}']) {
+      yield { type: 'TOOL_CALL_ARGS', toolCallId, delta: chunk };
+      await sleep(120);
+    }
+    yield { type: 'TOOL_CALL_END', toolCallId };
+    await sleep(200);
+    yield {
+      type: 'TOOL_CALL_RESULT',
+      messageId,
+      toolCallId,
+      toolName: 'get_weather',
+      result: { city: 'Hanoi', tempC: 31, condition: 'Sunny' },
+    };
+    await sleep(200);
+  }
+
+  yield { type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' };
+  const reply = buildReply(prompt);
+  for (const word of reply.split(' ')) {
+    yield { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' };
+    await sleep(45);
+  }
+  yield { type: 'TEXT_MESSAGE_END', messageId };
+  // Publish follow-up quick replies via shared state (STATE_SNAPSHOT) — the UI
+  // reads `agentState.suggestions` and renders them as chips. No custom event.
+  yield { type: 'STATE_SNAPSHOT', snapshot: { suggestions: suggestionsFor(prompt) } };
+  yield { type: 'RUN_FINISHED', runId };
+}
+
 async function streamMockRun(
   res: ServerResponse,
   body: RunBody,
@@ -80,12 +312,10 @@ async function streamMockRun(
   // fresh ids the client hasn't seen — exactly what a resumable backend does.
   let seq = Number.parseInt(lastEventId ?? '', 10) || 0;
   const send = (event: unknown) => res.write(`id: ${++seq}\ndata: ${JSON.stringify(event)}\n\n`);
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const lastUser = [...(body.messages ?? [])].reverse().find((m) => m.role === 'user');
   const prompt = lastUser?.parts?.find((p) => p.type === 'text')?.text ?? '';
   const runId = `run_${Date.now()}`;
-  const messageId = `msg_${Date.now()}`;
 
   // Fault injection for E2E/resilience testing: the first attempt (no
   // Last-Event-ID) starts a reply then drops the socket mid-stream without a
@@ -113,151 +343,16 @@ async function streamMockRun(
     return;
   }
 
-  send({ type: 'RUN_STARTED', runId });
-  await sleep(250);
-
-  // Human-in-the-loop: a resumed run carries the user's interrupt resolution.
-  // Respond based on whether they approved.
-  if (body.resume?.length) {
-    const approved = body.resume.some((r) => isApproved(r.value));
-    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
-    const reply = approved
-      ? 'Done — the file has been deleted (pretend!). ✅'
-      : 'No problem — I left everything as is.';
-    for (const word of reply.split(' ')) {
-      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
-      await sleep(45);
-    }
-    send({ type: 'TEXT_MESSAGE_END', messageId });
-    send({ type: 'RUN_FINISHED', runId });
-    res.end();
-    return;
-  }
-
-  // Frontend-action confirmation (client-side HITL): deleting the note is a
-  // *consequential* browser action. The agent calls the `delete_note` frontend
-  // tool and finishes without a result; the widget shows an approval card
-  // (requireConfirmation) and only runs the handler once the user approves,
-  // then starts a follow-up run carrying the result — which lands here.
-  if (/\bnote\b/i.test(prompt)) {
-    const result = toolResultFor(body, 'delete_note');
-    if (result === undefined) {
-      const toolCallId = `call_${Date.now()}`;
-      send({ type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'delete_note' });
-      send({ type: 'TOOL_CALL_ARGS', toolCallId, delta: '{}' });
-      send({ type: 'TOOL_CALL_END', toolCallId });
-      send({ type: 'RUN_FINISHED', runId });
-      res.end();
-      return;
-    }
-    const declined =
-      typeof result === 'object' && result !== null && (result as { declined?: unknown }).declined;
-    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
-    const reply = declined
-      ? 'No problem — I left the note in place.'
-      : 'Done — I removed the pinned note for you. 🗑️';
-    for (const word of reply.split(' ')) {
-      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
-      await sleep(45);
-    }
-    send({ type: 'TEXT_MESSAGE_END', messageId });
-    send({ type: 'RUN_FINISHED', runId });
-    res.end();
-    return;
-  }
-
-  // Human-in-the-loop trigger: a destructive request pauses for approval. The
-  // run finishes with an `interrupt` outcome; the widget shows accept/reject and
-  // resumes the run (handled above) with the user's choice.
-  if (/delete|remove|wipe/i.test(prompt)) {
-    send({
-      type: 'RUN_FINISHED',
-      runId,
-      outcome: {
-        type: 'interrupt',
-        interrupts: [
-          {
-            id: `int_${Date.now()}`,
-            kind: 'approval',
-            message: 'Deleting report.pdf is permanent. Do you want me to proceed?',
-            value: { action: 'delete_file', path: '/demo/report.pdf' },
-          },
-        ],
-      },
-    });
-    res.end();
-    return;
-  }
-
-  // Frontend tool hand-off: when asked about the page background, call the
-  // browser-side `set_page_background` tool and finish WITHOUT a result. The
-  // client executes the handler and starts a follow-up run carrying the result,
-  // which lands in the `else` branch below to confirm.
-  if (/background|backdrop/i.test(prompt)) {
-    if (!hasToolResult(body, 'set_page_background')) {
-      const toolCallId = `call_${Date.now()}`;
-      send({ type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'set_page_background' });
-      // Arbitrary demo color for the host page — not a widget theme token.
-      for (const chunk of ['{"color":', '"#0f766e"}']) {
-        send({ type: 'TOOL_CALL_ARGS', toolCallId, delta: chunk });
-        await sleep(120);
-      }
-      send({ type: 'TOOL_CALL_END', toolCallId });
-      send({ type: 'RUN_FINISHED', runId });
-      res.end();
-      return;
-    }
-    send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
-    for (const word of 'Done — I updated the page background for you. ✨'.split(' ')) {
-      send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
-      await sleep(45);
-    }
-    send({ type: 'TEXT_MESSAGE_END', messageId });
-    send({ type: 'RUN_FINISHED', runId });
-    res.end();
-    return;
-  }
-
-  // Demonstrate a tool-call lifecycle when the user mentions "weather".
-  if (/weather/i.test(prompt)) {
-    const toolCallId = `call_${Date.now()}`;
-    send({ type: 'TOOL_CALL_START', messageId, toolCallId, toolName: 'get_weather' });
-    for (const chunk of ['{"city":', '"Hanoi"}']) {
-      send({ type: 'TOOL_CALL_ARGS', toolCallId, delta: chunk });
-      await sleep(120);
-    }
-    send({ type: 'TOOL_CALL_END', toolCallId });
-    await sleep(200);
-    send({
-      type: 'TOOL_CALL_RESULT',
-      messageId,
-      toolCallId,
-      toolName: 'get_weather',
-      result: { city: 'Hanoi', tempC: 31, condition: 'Sunny' },
-    });
-    await sleep(200);
-  }
-
-  send({ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' });
-  const reply = buildReply(prompt);
-  for (const word of reply.split(' ')) {
-    send({ type: 'TEXT_MESSAGE_CONTENT', messageId, delta: word + ' ' });
-    await sleep(45);
-  }
-  send({ type: 'TEXT_MESSAGE_END', messageId });
-  // Publish follow-up quick replies via shared state (STATE_SNAPSHOT) — the UI
-  // reads `agentState.suggestions` and renders them as chips. No custom event.
-  send({ type: 'STATE_SNAPSHOT', snapshot: { suggestions: suggestionsFor(prompt) } });
-  send({ type: 'RUN_FINISHED', runId });
+  for await (const event of runScenario(body)) send(event);
   res.end();
 }
 
 /** Contextual follow-up suggestions offered after an answer. */
 function suggestionsFor(prompt: string): string[] {
   if (/weather/i.test(prompt)) {
-    return ['What about tomorrow?', 'Change the background', 'Delete the note'];
+    return ['What about tomorrow?', 'Show me the sales chart', 'Talk to a human'];
   }
-  return ['What is the weather?', 'Change the background', 'Delete the note'];
+  return ['What is the weather?', 'Show me the sales chart', 'Talk to a human'];
 }
 
 function buildReply(prompt: string): string {
@@ -270,9 +365,10 @@ function buildReply(prompt: string): string {
     'This is a **mock** AG-UI stream proving the end-to-end vertical slice: ' +
     'SDK → Shadow DOM → core store → renderers → UI. Try asking about the ' +
     '`weather` (backend tool-call), ask me to **change the background** (a ' +
-    '_frontend_ tool in your browser), **delete the note** (a frontend action ' +
-    'that asks for confirmation first), or **delete a file** (a backend ' +
-    'human-in-the-loop approval step).'
+    '_frontend_ tool in your browser), **show me the sales chart** (generative ' +
+    'UI + a live artifact panel), **delete the note** (a frontend action that ' +
+    'asks for confirmation first), **delete a file** (a backend ' +
+    'human-in-the-loop approval step), or **talk to a human** (agent handoff).'
   );
 }
 

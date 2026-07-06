@@ -1,16 +1,25 @@
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconLayoutSidebarRight,
   IconMessages,
   IconSearch,
   IconX,
 } from '@tabler/icons-react';
-import { useChatContext } from '../context';
+import { readHandoff, readPresence, type Presence, type StringKey } from '@livechat-hub/shared';
+import { useChatContext, useChatStore } from '../context';
 import { useControlSize } from '../hooks/use-control-size';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { AgentAvatar } from './AgentAvatar';
 import { SettingsMenu } from './SettingsMenu';
+
+/** Presence dot color (a `--lch-*` token) and its localized label key. */
+const PRESENCE: Record<Presence, { token: string; labelKey: StringKey }> = {
+  online: { token: 'var(--lch-success)', labelKey: 'header.online' },
+  away: { token: 'var(--lch-warning)', labelKey: 'header.away' },
+  offline: { token: 'var(--lch-text-muted)', labelKey: 'header.offline' },
+};
 
 export interface HeaderProps {
   onClose?: () => void;
@@ -24,6 +33,8 @@ export interface HeaderProps {
   searchActive?: boolean;
   /** Open the multi-thread conversation list; omit to hide the control. */
   onOpenConversations?: () => void;
+  /** Open the artifact panel; omit to hide the control (e.g. no artifacts yet). */
+  onOpenArtifacts?: () => void;
 }
 
 export function Header({
@@ -33,9 +44,19 @@ export function Header({
   onToggleSearch,
   searchActive,
   onOpenConversations,
+  onOpenArtifacts,
 }: HeaderProps) {
   const { t } = useChatContext();
   const { chromeButton, chromeIcon } = useControlSize();
+  // Presence + human-agent handoff are backend-driven, published into the shared
+  // agent state (no bespoke protocol events). Once connected to a human, the
+  // header adopts their name.
+  const agentState = useChatStore((s) => s.agentState);
+  const presence = readPresence(agentState);
+  const handoff = readHandoff(agentState);
+  const connectedAgent = handoff?.status === 'connected' ? handoff.agentName : undefined;
+  const title = connectedAgent ?? t('header.title');
+  const dot = PRESENCE[presence];
   return (
     <header className="bg-card relative z-10 flex items-center gap-2 px-4 py-3 shadow-[var(--lch-shadow-sm)]">
       {onOpenConversations && (
@@ -52,24 +73,39 @@ export function Header({
       )}
       <AgentAvatar size="md" animated />
       <div className="min-w-0 flex-1">
-        <p className="m-0 truncate font-semibold tracking-tight">{t('header.title')}</p>
+        <p className="m-0 truncate font-semibold tracking-tight">{title}</p>
         <p className="text-muted-foreground m-0 flex items-center gap-1.5 truncate text-xs">
-          {/* Solid presence dot (success token); the soft pulse only plays when
-           * motion is allowed, otherwise it reads as a steady "online" light. */}
+          {/* Presence dot in the status token; the soft pulse only plays for
+           * `online` (and when motion is allowed), otherwise it reads as a
+           * steady away/offline light. */}
           <span className="relative inline-flex size-2 shrink-0">
+            {presence === 'online' && (
+              <span
+                style={{ backgroundColor: dot.token }}
+                className="absolute inline-flex h-full w-full rounded-full opacity-60 motion-safe:animate-ping"
+              />
+            )}
             <span
-              style={{ backgroundColor: 'var(--lch-success)' }}
-              className="absolute inline-flex h-full w-full rounded-full opacity-60 motion-safe:animate-ping"
-            />
-            <span
-              style={{ backgroundColor: 'var(--lch-success)' }}
+              style={{ backgroundColor: dot.token }}
               className="relative inline-flex size-2 rounded-full"
             />
           </span>
-          {t('header.online')}
+          {t(dot.labelKey)}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {onOpenArtifacts && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onOpenArtifacts}
+            aria-label={t('artifact.open')}
+            className={cn('text-muted-foreground', chromeButton)}
+          >
+            <IconLayoutSidebarRight className={chromeIcon} aria-hidden="true" />
+          </Button>
+        )}
         {onToggleSearch && (
           <Button
             type="button"

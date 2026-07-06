@@ -2,6 +2,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 import type {
   Artifact,
   ConversationSummary,
+  CsatState,
   InterruptResolution,
   MessageFeedback,
   MessageMetadata,
@@ -10,6 +11,7 @@ import type {
   RunState,
   Session,
   UIMessage,
+  UserIdentity,
 } from '@livechat-hub/shared';
 import { AgUiEventType, type Transport } from '@livechat-hub/transport';
 import { createActionRegistry, type ContextProvider, type FrontendAction } from './actions';
@@ -79,6 +81,12 @@ export interface ChatState {
   frontendTools: string[];
   /** Consequential frontend actions awaiting user approval before running. */
   actionConfirmations: ActionConfirmation[];
+  /**
+   * End-of-chat satisfaction (CSAT) prompt state. Presence and human-agent
+   * handoff are backend-driven and read from {@link ChatState.agentState}
+   * (see `LifecycleAgentState`); CSAT is client-driven and lives here.
+   */
+  csat: CsatState;
 }
 
 export interface ChatActions {
@@ -150,6 +158,13 @@ export interface ChatActions {
    */
   setGuestName(name: string): void;
   /**
+   * Update the end-user identity at runtime (host `identify()`), merging the
+   * given fields onto the session. `userId` and the opaque `traits`/name/email
+   * are forwarded to the agent on the next run — no re-init required. See
+   * {@link UserIdentity}.
+   */
+  identify(user: UserIdentity): void;
+  /**
    * Register a frontend tool the agent may invoke in the browser. Returns an
    * unregister function. See {@link FrontendAction}.
    */
@@ -159,6 +174,21 @@ export interface ChatActions {
    * Returns an unregister function. See {@link ContextProvider}.
    */
   registerContext(provider: ContextProvider): () => void;
+  /**
+   * Inject a proactive assistant message (a host-triggered greeting / nudge —
+   * by URL, time on page, scroll, …). It is appended client-side and persisted,
+   * but starts no run. No-op for empty text.
+   */
+  addProactiveMessage(text: string): void;
+  /** Show the end-of-chat satisfaction (CSAT) prompt. */
+  requestCsat(): void;
+  /**
+   * Record the end-user's CSAT rating (1–5, clamped) and optional comment, then
+   * hide the prompt. No-op for an out-of-range rating.
+   */
+  submitCsat(rating: number, comment?: string): void;
+  /** Dismiss the CSAT prompt without submitting a rating. */
+  dismissCsat(): void;
 }
 
 export type ChatStore = ChatState & ChatActions;
@@ -321,17 +351,22 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       let contacted = false;
 
       try {
+        // Read identity from the (live) session so a runtime `identify()` takes
+        // effect on the very next run without a re-init.
+        const activeSession = get().session;
+        const identity = identityMetadata(activeSession);
         const stream = transport.run(
           {
             // A conversation is a thread: the active conversation id is the
             // backend threadId, so each thread streams / resumes independently.
             threadId: get().activeConversationId,
             tenantId,
-            userId,
+            userId: activeSession.userId,
             messages: get().messages,
             tools: registry.toolSpecs(),
             context: registry.contextItems(),
             ...(resume ? { resume } : {}),
+            ...(identity ? { metadata: { user: identity } } : {}),
             ...(Object.keys(get().agentState).length > 0 ? { state: get().agentState } : {}),
           },
           { signal: abortController.signal },
@@ -380,6 +415,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
                     id: event.artifactId,
                     kind: event.kind,
                     payload: event.payload,
+                    ...(event.title !== undefined ? { title: event.title } : {}),
                     updatedAt: Date.now(),
                   },
                 },
@@ -483,7 +519,10 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
     };
 
     /** Run a handler, failing it if it exceeds the action's `timeoutMs` (if any). */
-    const runHandler = (action: FrontendAction, args: Record<string, unknown>): Promise<unknown> => {
+    const runHandler = (
+      action: FrontendAction,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
       const settled = Promise.resolve().then(() => action.handler(args));
       const timeout = action.timeoutMs ?? 0;
       if (timeout <= 0) return settled;
@@ -569,8 +608,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
     };
 
     /** True while a turn is in-flight: streaming, or paused on an action confirmation. */
-    const isTurnBusy = () =>
-      get().run.status === 'running' || get().actionConfirmations.length > 0;
+    const isTurnBusy = () => get().run.status === 'running' || get().actionConfirmations.length > 0;
 
     /**
      * Make `id` the active conversation: stop any live turn, reset transient
@@ -589,6 +627,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         agentState: {},
         artifacts: {},
         actionConfirmations: [],
+        csat: { status: 'idle' },
       });
       persistence?.saveConversationIndex({ activeId: id, summaries: get().conversations });
       if (!persistence) return;
@@ -639,6 +678,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       artifacts: {},
       frontendTools: registry.actionNames(),
       actionConfirmations: [],
+      csat: { status: 'idle' },
 
       async sendMessage(text, extraParts = []) {
         const trimmed = text.trim();
@@ -740,6 +780,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
           agentState: {},
           artifacts: {},
           actionConfirmations: [],
+          csat: { status: 'idle' },
           conversations: summaries,
         });
         persistence?.saveConversationIndex({ activeId, summaries });
@@ -801,6 +842,23 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         persistence?.saveSession(next);
       },
 
+      identify(user) {
+        const prev = get().session;
+        // Merge onto the session: `userId` is a first-class field; name / email
+        // / traits ride in `metadata` (opaque, provider-agnostic annotations).
+        const metadata: Record<string, unknown> = { ...prev.metadata };
+        if (user.name !== undefined) metadata.name = user.name;
+        if (user.email !== undefined) metadata.email = user.email;
+        if (user.traits !== undefined) metadata.traits = user.traits;
+        const next: Session = {
+          ...prev,
+          ...(user.userId !== undefined ? { userId: user.userId } : {}),
+          metadata,
+        };
+        set({ session: next });
+        persistence?.saveSession(next);
+      },
+
       registerAction(action) {
         const unregister = registry.registerAction(action);
         // Mirror the registered names into state so renderers can tell a
@@ -812,6 +870,39 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         };
       },
       registerContext: registry.registerContext,
+
+      addProactiveMessage(text) {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const message: UIMessage = {
+          id: createId('msg'),
+          role: 'assistant',
+          parts: [{ type: 'text', text: trimmed, state: 'done' }],
+          // Flag it so hosts / analytics can tell a proactive nudge apart from a
+          // streamed answer; the open metadata index allows the extra key.
+          metadata: { createdAt: Date.now(), proactive: true },
+        };
+        set({ messages: [...get().messages, message] });
+        persistMessages();
+      },
+
+      requestCsat() {
+        set({ csat: { status: 'requested' } });
+      },
+
+      submitCsat(rating, comment) {
+        const clamped = Math.round(rating);
+        if (clamped < 1 || clamped > 5) return;
+        const result =
+          comment && comment.trim()
+            ? { rating: clamped, comment: comment.trim() }
+            : { rating: clamped };
+        set({ csat: { status: 'submitted', result } });
+      },
+
+      dismissCsat() {
+        set({ csat: { status: 'idle', result: get().csat.result } });
+      },
     };
   });
 
@@ -866,6 +957,21 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
   }
 
   return store;
+}
+
+/**
+ * The identity annotation forwarded to the agent (via `RunInput.metadata.user`)
+ * — name / email / traits set through `identify()`. Returns `undefined` when the
+ * session carries no identity so an empty object never rides on the wire.
+ */
+function identityMetadata(session: Session): Record<string, unknown> | undefined {
+  const meta = session.metadata;
+  if (!meta) return undefined;
+  const entries: Record<string, unknown> = {};
+  if (meta.name !== undefined) entries.name = meta.name;
+  if (meta.email !== undefined) entries.email = meta.email;
+  if (meta.traits !== undefined) entries.traits = meta.traits;
+  return Object.keys(entries).length > 0 ? entries : undefined;
 }
 
 /** A brand-new, empty conversation summary (fresh id + timestamps). */

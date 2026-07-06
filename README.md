@@ -162,6 +162,112 @@ LiveChatHub.init({
 });
 ```
 
+### Async loading (non-blocking snippet)
+
+To keep the widget off the critical path, load the bundle **asynchronously** and
+queue any calls made before it finishes downloading (the Intercom/Segment
+pattern). The stub buffers `LiveChatHub.*(…)` calls into a queue; the real bundle
+replays them in order on load:
+
+```html
+<script>
+  (function (w, d, s, u) {
+    var q = [];
+    var stub = { _q: q };
+    [
+      'init',
+      'open',
+      'close',
+      'toggle',
+      'sendMessage',
+      'setTheme',
+      'identify',
+      'updateConfig',
+      'sendProactiveMessage',
+      'requestCsat',
+      'on',
+      'off',
+      'onEvent',
+      'destroy',
+    ].forEach(function (m) {
+      stub[m] = function () {
+        q.push([m, arguments]);
+        return stub;
+      };
+    });
+    w.LiveChatHub = w.LiveChatHub || stub;
+    var el = d.createElement(s);
+    el.async = 1;
+    el.src = u;
+    d.head.appendChild(el);
+  })(window, document, 'script', 'https://your-cdn.example.com/livechat-sdk.js');
+
+  // These run immediately against the stub and replay once the bundle loads:
+  LiveChatHub.init({ apiUrl: 'https://api.example.com', tenantId: 'tenant_123' });
+  LiveChatHub.identify({ userId: 'u_1', name: 'Ada Lovelace' });
+</script>
+```
+
+### Identify users & runtime config
+
+The `LiveChatHub` object mirrors the instance methods as singleton helpers that
+act on the active widget — so you can drive it without holding the handle:
+
+```js
+// Attach / update the end-user identity (forwarded to the agent on the next run):
+LiveChatHub.identify({ userId: 'u_1', name: 'Ada', email: 'ada@x.io', traits: { plan: 'pro' } });
+
+// Patch presentation config at runtime — no re-init, conversation preserved:
+LiveChatHub.updateConfig({ locale: 'vi', theme: 'dark', suggestions: ['Track my order'] });
+```
+
+`updateConfig` applies `theme` / `colorScheme` / `themeOverrides`, `locale`,
+`strings`, and `suggestions` live. Transport-level fields (`apiUrl`, `tenantId`,
+`transport`) are fixed at mount and require a re-init.
+
+### Analytics & telemetry
+
+Pipe every lifecycle event into your own analytics/observability, or wire a
+dedicated error channel:
+
+```js
+LiveChatHub.init({
+  apiUrl: 'https://api.example.com',
+  tenantId: 'tenant_123',
+  analytics: {
+    onEvent: ({ name, payload }) => analytics.track(`chat:${name}`, payload),
+    onError: ({ message, code }) => Sentry.captureMessage(`${code ?? 'run'} — ${message}`),
+  },
+});
+
+// Or subscribe imperatively (returns an unsubscribe fn):
+const off = LiveChatHub.onEvent(({ name }) => console.debug('lch', name));
+```
+
+Events: `ready`, `open`, `close`, `message`, `run:status`, `error`, `feedback`,
+`identify`, `config`, `presence`, `handoff`, `csat`, `destroy`.
+
+### Live-chat lifecycle
+
+```js
+// Presence + human-agent handoff are backend-driven (published into the shared
+// agent state) — observe them:
+LiveChatHub.on('presence', (p) => console.log('agent is', p)); // 'online' | 'away' | 'offline'
+LiveChatHub.on('handoff', (h) => console.log('handoff', h.status, h.agentName));
+
+// A proactive greeting after 8s on the page (or fire your own on scroll/URL):
+LiveChatHub.init({
+  apiUrl: 'https://api.example.com',
+  tenantId: 'tenant_123',
+  proactive: { message: '👋 Need a hand finding something?', delayMs: 8000 },
+});
+LiveChatHub.sendProactiveMessage('Still there? Happy to help.');
+
+// End-of-chat satisfaction survey — show it, then collect the rating:
+LiveChatHub.requestCsat();
+LiveChatHub.on('csat', ({ rating, comment }) => analytics.track('csat', { rating, comment }));
+```
+
 ### Hardening & distribution
 
 - **CSP + auth + storage model:** see [`SECURITY.md`](SECURITY.md) for the
