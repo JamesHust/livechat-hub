@@ -27,6 +27,7 @@ export const lightTheme: Theme = {
     'gradient-foreground': '#ffffff',
     'primary-soft': 'rgba(24, 86, 255, 0.10)',
     success: '#07ca6b',
+    warning: '#f59f00',
     // Conversation canvas (message list): a cool off-white, slightly darker and
     // more opaque than the chrome — it reads as a recessed surface the white
     // chrome bars + bubbles sit on top of (iMessage/Messenger pattern).
@@ -62,6 +63,7 @@ export const darkTheme: Theme = {
     'gradient-foreground': '#ffffff',
     'primary-soft': 'rgba(77, 125, 255, 0.16)',
     success: '#1fdd86',
+    warning: '#ffc94d',
     // Deepened canvas so the chrome bars + bubbles read as elevated above it.
     background: 'rgba(12, 12, 20, 0.72)',
     surface: 'rgba(40, 38, 56, 0.60)',

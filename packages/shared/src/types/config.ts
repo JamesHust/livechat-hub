@@ -28,6 +28,59 @@ export type UploadFn = (file: File) => Promise<{ url: string; mimeType?: string 
 export type GetAuthToken = () => string | undefined | Promise<string | undefined>;
 
 /**
+ * End-user identity supplied by the host page (Intercom-style `identify`).
+ * Everything but `userId` is opaque, provider-agnostic annotation forwarded to
+ * the agent for personalization; the frontend never interprets `traits`.
+ */
+export interface UserIdentity {
+  /** Stable, opaque identifier for the end-user, forwarded to the backend. */
+  userId?: string;
+  /** Human-readable display name, if known. */
+  name?: string;
+  /** Contact email, if known. */
+  email?: string;
+  /** Free-form attributes (plan, locale, signup date, …) forwarded to the agent. */
+  traits?: Record<string, unknown>;
+}
+
+/**
+ * A single telemetry event surfaced to the host's analytics sink: the emitter
+ * event `name` and its `payload`. Lets a deployment pipe widget lifecycle into
+ * its own analytics/observability without knowing the emitter's internals.
+ */
+export interface TelemetryEvent {
+  name: string;
+  payload: unknown;
+}
+
+/**
+ * Optional analytics / error-reporting sinks. `onEvent` receives **every**
+ * lifecycle event the widget emits (open/close/message/run status/…); `onError`
+ * is a convenience channel for run failures so hosts can wire error reporting
+ * (Sentry, etc.) without filtering the event stream.
+ */
+export interface AnalyticsConfig {
+  /** Called for every emitted lifecycle event. Never throw — it's swallowed. */
+  onEvent?: (event: TelemetryEvent) => void;
+  /** Called when a run fails, in addition to the `error` event. */
+  onError?: (error: { message: string; code?: string }) => void;
+}
+
+/**
+ * A proactive (triggered) greeting nudge — shown after the user has spent
+ * `delayMs` on the page, without them opening the chat first. Host-driven; not
+ * an agent run. Wire richer URL/scroll triggers with `sendProactiveMessage()`.
+ */
+export interface ProactiveConfig {
+  /** The assistant message to inject (host copy — localize on your side). */
+  message: string;
+  /** Delay before showing it, in ms. Default ~5000. */
+  delayMs?: number;
+  /** Open the panel when the nudge fires (default: leave it to the launcher). */
+  openOnShow?: boolean;
+}
+
+/**
  * Transport resilience hooks/tuning. Sensible defaults come from
  * `TRANSPORT_DEFAULTS`; override only what a deployment needs.
  */
@@ -64,6 +117,16 @@ export interface LiveChatConfig {
   transport?: TransportKind;
   /** Opaque identity for the current end-user, forwarded to the backend. */
   userId?: string;
+  /**
+   * Full end-user identity (name / email / traits) for personalization,
+   * forwarded to the agent. `user.userId` takes precedence over the flat
+   * `userId` above; update it at runtime with `identify()`.
+   */
+  user?: UserIdentity;
+  /** Analytics / error-reporting sinks. See {@link AnalyticsConfig}. */
+  analytics?: AnalyticsConfig;
+  /** A proactive/triggered greeting shown after a delay. See {@link ProactiveConfig}. */
+  proactive?: ProactiveConfig;
   /** Extra headers attached to every transport request. */
   headers?: Record<string, string>;
   /** Initial open/closed state of the launcher. */

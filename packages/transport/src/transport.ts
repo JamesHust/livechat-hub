@@ -9,6 +9,7 @@ import type {
 import { AgUiEventType, type AgUiEvent } from './events';
 import { parseSseStream } from './sse';
 import { parseEvent } from './validate';
+import { abortError, backoffDelay, isAbort, sleep } from './backoff';
 
 /** Payload sent to the backend to start an agent run. Provider-agnostic. */
 export interface RunInput {
@@ -219,12 +220,6 @@ export function createSseTransport(config: SseTransportConfig): Transport {
   return new SseTransport(config);
 }
 
-/** Full-jitter exponential backoff: random delay in `[0, min(max, base·2^n)]`. */
-function backoffDelay(attempt: number, base: number, max: number): number {
-  const ceiling = Math.min(max, base * 2 ** attempt);
-  return Math.random() * ceiling;
-}
-
 /** Parse a `Retry-After` header (delta-seconds or HTTP-date) into ms. */
 function parseRetryAfter(header: string | null): number | undefined {
   if (!header) return undefined;
@@ -233,36 +228,6 @@ function parseRetryAfter(header: string | null): number | undefined {
   const date = Date.parse(header);
   if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   return undefined;
-}
-
-/** Abortable delay: rejects with an `AbortError` if the signal fires first. */
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return void reject(abortError());
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError());
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-function isAbort(error: unknown, signal?: AbortSignal): boolean {
-  return signal?.aborted === true || (error instanceof Error && error.name === 'AbortError');
-}
-
-function abortError(): Error {
-  try {
-    return new DOMException('The operation was aborted.', 'AbortError');
-  } catch {
-    const error = new Error('The operation was aborted.');
-    error.name = 'AbortError';
-    return error;
-  }
 }
 
 function joinUrl(base: string, path: string): string {

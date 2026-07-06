@@ -96,6 +96,8 @@ export interface Artifact {
   id: string;
   kind: string;
   payload: unknown;
+  /** Human-readable label for the artifact panel; falls back to the id / kind. */
+  title?: string;
   /** Client clock (epoch ms) of the last update, for ordering / freshness. */
   updatedAt?: number;
 }

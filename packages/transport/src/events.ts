@@ -132,6 +132,8 @@ export interface ArtifactUpdateEvent extends BaseEvent<typeof AgUiEventType.Arti
   artifactId: string;
   kind: string;
   payload: unknown;
+  /** Optional human-readable label surfaced in the artifact panel. */
+  title?: string;
 }
 
 export interface CustomUiEvent extends BaseEvent<typeof AgUiEventType.CustomUi> {

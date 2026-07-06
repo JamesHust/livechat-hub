@@ -96,10 +96,17 @@ plain `RUN_FINISHED`:
   "outcome": {
     "type": "interrupt",
     "interrupts": [
-      { "id": "int_1", "kind": "approval", "message": "Allow sending email?", "value": { /* … */ } }
+      {
+        "id": "int_1",
+        "kind": "approval",
+        "message": "Allow sending email?",
+        "value": {
+          /* … */
+        },
+      },
       // kind: "input" prompts for free text instead of accept/reject
-    ]
-  }
+    ],
+  },
 }
 ```
 
@@ -172,9 +179,32 @@ The backend therefore treats attachment URLs as opaque: fetch/forward them to th
 agent as needed. Voice messages are an `audio` part (commonly `audio/webm`) with
 an optional `durationMs`.
 
-## WebSocket (future)
+## WebSocket transport
 
-The `Transport` interface in
-[`packages/transport/src/transport.ts`](../packages/transport/src/transport.ts)
-is transport-agnostic; a `createWebSocketTransport` can be added later without
-touching the core, UI, or renderers.
+`createWebSocketTransport`
+([`packages/transport/src/websocket.ts`](../packages/transport/src/websocket.ts))
+is a full-duplex alternative to SSE, selected with `config.transport:
+'websocket'`. It speaks the **same AG-UI events**; only the framing differs, so
+`core` / `ui` / `renderers` are untouched. One socket is opened per run and
+reconnects/resumes with the same backoff + idle rules as SSE.
+
+Because browsers can't set WebSocket request headers, tenant and auth ride in the
+run frame payload rather than headers. The wire format:
+
+| Direction       | Frame                                                                      | Purpose                                                                                                                                                                                                                      |
+| --------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| client → server | `{"type":"run","runKey":"…","payload":<RunInput>,"token"?,"lastEventId"?}` | Start (or resume) a run. `payload` is the same body as the SSE POST.                                                                                                                                                         |
+| client → server | `{"type":"ping"}`                                                          | App-level keepalive (browsers can't send native ping frames).                                                                                                                                                                |
+| server → client | `{"type":"event","runKey":"…","id":"<seq>","event":<AgUiEvent>}`           | One AG-UI event. `id` is the monotonic resume cursor (like the SSE `id:` line); echoed back as `lastEventId` on reconnect so the client dedupes replayed frames. `runKey` lets a multiplexing backend address the right run. |
+| server → client | `<AgUiEvent>` (bare object)                                                | Accepted too, for simple single-run backends that don't multiplex.                                                                                                                                                           |
+| server → client | `{"type":"pong"}`                                                          | Optional keepalive ack; resets the client's idle watchdog.                                                                                                                                                                   |
+
+Terminate a run by sending `RUN_FINISHED` / `RUN_ERROR` as usual. If the socket
+closes before a terminal event, the client reconnects with the last `id` in
+`lastEventId` and expects the run to resume (replayed frames are deduped by `id`).
+
+A reference implementation is
+[`apps/demo-site/mock-ws.ts`](../apps/demo-site/mock-ws.ts) — it shares the SSE
+mock's scenario engine and serves both transports on the same `/agent/run` path
+(SSE via `POST`, WebSocket via HTTP upgrade). Run the demo with
+`?transport=ws` to exercise it.

@@ -11,9 +11,12 @@ export { Header, type HeaderProps } from './components/Header';
 export { LanguageSwitcher } from './components/LanguageSwitcher';
 export { Launcher, type LauncherProps } from './components/Launcher';
 export { ErrorBar } from './components/ErrorBar';
+export { HandoffBanner } from './components/HandoffBanner';
 export { InterruptPrompt } from './components/InterruptPrompt';
 export { ActionConfirmPrompt } from './components/ActionConfirmPrompt';
+export { CsatPrompt } from './components/CsatPrompt';
 export { ConversationList, type ConversationListProps } from './components/ConversationList';
+export { ArtifactPanel, type ArtifactPanelProps } from './components/ArtifactPanel';
 export { TypingIndicator } from './components/TypingIndicator';
 export {
   WidgetLayoutProvider,

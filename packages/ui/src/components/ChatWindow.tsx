@@ -3,9 +3,12 @@ import { LazyMotion, m, useReducedMotion } from 'framer-motion';
 import { Header } from './Header';
 import { MessageList } from './MessageList';
 import { ErrorBar } from './ErrorBar';
+import { HandoffBanner } from './HandoffBanner';
 import { InterruptPrompt } from './InterruptPrompt';
 import { ActionConfirmPrompt } from './ActionConfirmPrompt';
+import { CsatPrompt } from './CsatPrompt';
 import { ConversationList } from './ConversationList';
+import { ArtifactPanel } from './ArtifactPanel';
 import { Composer } from './Composer';
 import { WelcomeScreen } from './WelcomeScreen';
 import { useChatStore } from '../context';
@@ -54,6 +57,12 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
   }, [hasMessages]);
   // Multi-thread conversation list (sheet over the panel).
   const [conversationsOpen, setConversationsOpen] = useState(false);
+  // Artifact panel — only offered once the agent has produced an artifact.
+  const hasArtifacts = useChatStore((s) => Object.keys(s.artifacts).length > 0);
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  useEffect(() => {
+    if (!hasArtifacts) setArtifactsOpen(false);
+  }, [hasArtifacts]);
   return (
     <LazyMotion features={domAnimation}>
       <m.div
@@ -97,20 +106,24 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
           }
           searchActive={searchOpen}
           onOpenConversations={!needsWelcome ? () => setConversationsOpen(true) : undefined}
+          onOpenArtifacts={!needsWelcome && hasArtifacts ? () => setArtifactsOpen(true) : undefined}
         />
         {needsWelcome ? (
           <WelcomeScreen />
         ) : (
           <>
             <MessageList searchOpen={searchOpen} onCloseSearch={() => setSearchOpen(false)} />
+            <HandoffBanner />
             <ErrorBar />
             <InterruptPrompt />
             <ActionConfirmPrompt />
+            <CsatPrompt />
             <Composer />
             <ConversationList
               open={conversationsOpen}
               onClose={() => setConversationsOpen(false)}
             />
+            <ArtifactPanel open={artifactsOpen} onClose={() => setArtifactsOpen(false)} />
           </>
         )}
       </m.div>
