@@ -257,5 +257,10 @@ export function useChatActions() {
     switchConversation: state.switchConversation,
     deleteConversation: state.deleteConversation,
     renameConversation: state.renameConversation,
+    pinConversation: state.pinConversation,
+    archiveConversation: state.archiveConversation,
+    markConversationRead: state.markConversationRead,
+    markNotificationRead: state.markNotificationRead,
+    markAllNotificationsRead: state.markAllNotificationsRead,
   };
 }

@@ -1,3 +1,4 @@
+import type { NotificationConfig } from './notification';
 import type { ColorScheme, ThemeOverrides } from './theme';
 
 export type TransportKind = 'sse' | 'websocket';
@@ -127,6 +128,12 @@ export interface LiveChatConfig {
   analytics?: AnalyticsConfig;
   /** A proactive/triggered greeting shown after a delay. See {@link ProactiveConfig}. */
   proactive?: ProactiveConfig;
+  /**
+   * Notification behavior — launcher unread badge, chime, and OS/desktop
+   * notifications when a reply arrives while the widget isn't being viewed. All
+   * channels are opt-in (badge on by default). See {@link NotificationConfig}.
+   */
+  notifications?: NotificationConfig;
   /** Extra headers attached to every transport request. */
   headers?: Record<string, string>;
   /** Initial open/closed state of the launcher. */

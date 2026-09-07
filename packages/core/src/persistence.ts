@@ -4,6 +4,7 @@ import {
   DRAFT_STORAGE_PREFIX,
   PERSISTENCE_SCHEMA_VERSION,
   SESSION_STORAGE_KEY,
+  type AppNotification,
   type ConversationSummary,
   type Session,
   type UIMessage,
@@ -60,6 +61,17 @@ export type MessageBackendFactory = (conversationId: string) => MessageBackend;
 export interface ConversationIndex {
   activeId: string;
   summaries: ConversationSummary[];
+  /**
+   * Unread assistant-message count per conversation id — the read watermark that
+   * survives reload so the launcher badge is correct on return. Absent on
+   * pre-Sprint-6 indexes (treated as all-read).
+   */
+  unread?: Record<string, number>;
+  /**
+   * The in-widget notification center's recent inbox (capped, newest first), so
+   * the bell survives reload. Absent on pre-Sprint-6 indexes.
+   */
+  notifications?: AppNotification[];
 }
 
 export const memoryStorage = (): StorageAdapter => {
@@ -121,7 +133,10 @@ export function defaultMessageBackendFactory(
         /* IndexedDB present but unusable — fall through to localStorage */
       }
     }
-    return new LocalStorageMessageBackend(storage, `${conversationKey(tenantId)}:${conversationId}`);
+    return new LocalStorageMessageBackend(
+      storage,
+      `${conversationKey(tenantId)}:${conversationId}`,
+    );
   };
 }
 

@@ -827,3 +827,118 @@ describe('multi-thread conversations', () => {
     expect(store.getState().csat.result).toEqual({ rating: 4, comment: 'great help' });
   });
 });
+
+/** A second complete assistant turn (distinct message id) for multi-reply tests. */
+const OK_RUN_2: AgUiEvent[] = [
+  { type: AgUiEventType.RunStarted, runId: 'r2' },
+  { type: AgUiEventType.TextMessageStart, messageId: 'a2', role: 'assistant' },
+  { type: AgUiEventType.TextMessageContent, messageId: 'a2', delta: 'Again' },
+  { type: AgUiEventType.TextMessageEnd, messageId: 'a2' },
+  { type: AgUiEventType.RunFinished, runId: 'r2' },
+];
+
+describe('unread + notifications', () => {
+  it('increments unread and records a notification on a completed reply', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    const id = store.getState().activeConversationId;
+    await store.getState().sendMessage('hi');
+
+    expect(store.getState().unread[id]).toBe(1);
+    const notifications = store.getState().notifications;
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      conversationId: id,
+      messageId: 'a1',
+      body: 'Hi',
+      read: false,
+    });
+
+    // Viewing the thread clears its unread count and marks its notifications read.
+    store.getState().markConversationRead(id);
+    expect(store.getState().unread[id]).toBeUndefined();
+    expect(store.getState().notifications[0]?.read).toBe(true);
+  });
+
+  it('does not notify for a failed or aborted turn', async () => {
+    const failing: Transport = {
+      // eslint-disable-next-line require-yield
+      async *run() {
+        throw new Error('network down');
+      },
+    };
+    const store = createChatStore({ transport: failing, tenantId: 't1', storage: null });
+    await store.getState().sendMessage('hi');
+    expect(store.getState().run.status).toBe('failed');
+    expect(store.getState().notifications).toHaveLength(0);
+    expect(Object.keys(store.getState().unread)).toHaveLength(0);
+  });
+
+  it('markNotificationRead draws down that conversation’s unread count', async () => {
+    const { transport } = scriptedTransport([OK_RUN, OK_RUN_2]);
+    const store = createChatStore({ transport, tenantId: 't1', storage: null });
+    const id = store.getState().activeConversationId;
+    await store.getState().sendMessage('one');
+    await store.getState().sendMessage('two');
+
+    expect(store.getState().unread[id]).toBe(2);
+    expect(store.getState().notifications).toHaveLength(2);
+
+    // Newest-first: reading the top entry drops the counter to 1.
+    const top = store.getState().notifications[0]!;
+    store.getState().markNotificationRead(top.id);
+    expect(store.getState().unread[id]).toBe(1);
+    expect(store.getState().notifications.find((n) => n.id === top.id)?.read).toBe(true);
+  });
+
+  it('markAllNotificationsRead clears the bell and every unread counter', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('hi');
+    expect(store.getState().notifications.some((n) => !n.read)).toBe(true);
+
+    store.getState().markAllNotificationsRead();
+    expect(store.getState().notifications.every((n) => n.read)).toBe(true);
+    expect(Object.keys(store.getState().unread)).toHaveLength(0);
+  });
+
+  it('persists unread + notifications across reload', async () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    const id = store.getState().activeConversationId;
+    await store.getState().sendMessage('hi');
+    await flush();
+    expect(store.getState().unread[id]).toBe(1);
+
+    const reopened = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    expect(reopened.getState().unread[id]).toBe(1);
+    expect(reopened.getState().notifications).toHaveLength(1);
+  });
+
+  it('pins and archives a conversation, and persists the flags', async () => {
+    const storage = memoryStorage();
+    const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    const id = store.getState().activeConversationId;
+
+    store.getState().pinConversation(id, true);
+    store.getState().archiveConversation(id, true);
+    const summary = store.getState().conversations.find((c) => c.id === id)!;
+    expect(summary.pinned).toBe(true);
+    expect(summary.archived).toBe(true);
+
+    const reopened = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
+    await flush();
+    const restored = reopened.getState().conversations.find((c) => c.id === id)!;
+    expect(restored.pinned).toBe(true);
+    expect(restored.archived).toBe(true);
+  });
+});

@@ -60,6 +60,10 @@ export interface ConversationSummary {
   updatedAt: number;
   /** Short snippet of the latest message, shown under the title. */
   preview?: string;
+  /** Pinned to the top of the list, ahead of recency ordering. */
+  pinned?: boolean;
+  /** Archived — hidden from the default list, shown only when archives are revealed. */
+  archived?: boolean;
 }
 
 export interface Session {

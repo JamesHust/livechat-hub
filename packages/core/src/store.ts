@@ -1,17 +1,19 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type {
-  Artifact,
-  ConversationSummary,
-  CsatState,
-  InterruptResolution,
-  MessageFeedback,
-  MessageMetadata,
-  MessagePart,
-  MessageStatus,
-  RunState,
-  Session,
-  UIMessage,
-  UserIdentity,
+import {
+  NOTIFICATION_HISTORY_MAX,
+  type AppNotification,
+  type Artifact,
+  type ConversationSummary,
+  type CsatState,
+  type InterruptResolution,
+  type MessageFeedback,
+  type MessageMetadata,
+  type MessagePart,
+  type MessageStatus,
+  type RunState,
+  type Session,
+  type UIMessage,
+  type UserIdentity,
 } from '@livechat-hub/shared';
 import { AgUiEventType, type Transport } from '@livechat-hub/transport';
 import { createActionRegistry, type ContextProvider, type FrontendAction } from './actions';
@@ -82,6 +84,19 @@ export interface ChatState {
   /** Consequential frontend actions awaiting user approval before running. */
   actionConfirmations: ActionConfirmation[];
   /**
+   * Unread assistant-message count per conversation id — the source of truth for
+   * every notification surface (launcher badge, bell). `core` never inspects
+   * panel/tab visibility: the UI/SDK calls {@link ChatActions.markConversationRead}
+   * whenever the user is actually viewing a thread, which resets it.
+   */
+  unread: Record<string, number>;
+  /**
+   * The in-widget notification center inbox (newest first, capped). Derived from
+   * the existing message flow — no bespoke protocol event — so the frontend
+   * stays provider-agnostic.
+   */
+  notifications: AppNotification[];
+  /**
    * End-of-chat satisfaction (CSAT) prompt state. Presence and human-agent
    * handoff are backend-driven and read from {@link ChatState.agentState}
    * (see `LifecycleAgentState`); CSAT is client-driven and lives here.
@@ -144,6 +159,20 @@ export interface ChatActions {
   deleteConversation(id: string): void;
   /** Rename a conversation, pinning a title that auto-derivation won't overwrite. */
   renameConversation(id: string, title: string): void;
+  /** Pin (or unpin) a conversation to the top of the list, ahead of recency. */
+  pinConversation(id: string, pinned: boolean): void;
+  /** Archive (or unarchive) a conversation — hidden from the default list. */
+  archiveConversation(id: string, archived: boolean): void;
+  /**
+   * Mark a conversation as read: resets its unread count and marks its
+   * notifications read. Called by the UI/SDK when the thread is actually being
+   * viewed (panel open + tab visible) — `core` has no notion of visibility.
+   */
+  markConversationRead(id: string): void;
+  /** Mark a single notification-center entry read (drives the bell badge). */
+  markNotificationRead(id: string): void;
+  /** Mark every notification read and clear all unread counters. */
+  markAllNotificationsRead(): void;
   /**
    * Update the shared agent state from the frontend. Accepts a replacement
    * object or an updater. The new state is forwarded to the agent (via
@@ -257,6 +286,16 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
     hasSavedIndex && savedIndex!.summaries.some((c) => c.id === savedIndex!.activeId)
       ? savedIndex!.activeId
       : initialConversations[0]!.id;
+  // Restore the unread watermark + notification inbox so the badge/bell are
+  // correct on return; pruned to conversations that still exist.
+  const knownIds = new Set(initialConversations.map((c) => c.id));
+  const initialUnread: Record<string, number> = {};
+  for (const [id, count] of Object.entries(savedIndex?.unread ?? {})) {
+    if (knownIds.has(id) && count > 0) initialUnread[id] = count;
+  }
+  const initialNotifications = (savedIndex?.notifications ?? [])
+    .filter((n) => knownIds.has(n.conversationId))
+    .slice(0, NOTIFICATION_HISTORY_MAX);
 
   let abortController: AbortController | null = null;
   // Interrupt resolutions to attach to the next run, set by `resume()` and
@@ -278,6 +317,22 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
 
   const store = createStore<ChatStore>((set, get) => {
     /**
+     * Persist the conversation index — sidebar summaries, active pointer, the
+     * unread watermark and the notification inbox — from current state. Every
+     * mutation to any of those calls this after its `set(...)`, so the small
+     * synchronous record stays authoritative across reloads.
+     */
+    const saveIndex = () => {
+      const state = get();
+      persistence?.saveConversationIndex({
+        activeId: state.activeConversationId,
+        summaries: state.conversations,
+        unread: state.unread,
+        notifications: state.notifications,
+      });
+    };
+
+    /**
      * Refresh the active conversation's summary (auto-title, preview, recency)
      * from its current messages and persist the index. Keeps the sidebar live
      * and is cheap — the index is a small synchronous record.
@@ -297,7 +352,34 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       };
       const updated = summaries.map((c, i) => (i === index ? next : c));
       set({ conversations: updated });
-      persistence?.saveConversationIndex({ activeId, summaries: updated });
+      saveIndex();
+    };
+
+    /**
+     * Record a freshly-completed assistant reply on `conversationId`: bump its
+     * unread count and push a notification-center entry. This is the single
+     * derivation point for every notification surface — no bespoke AG-UI event.
+     * The UI resets it via {@link ChatActions.markConversationRead} while the
+     * thread is being viewed, so a badge only lingers when the user isn't looking.
+     */
+    const recordAssistantReply = (message: UIMessage, conversationId: string) => {
+      const summary = get().conversations.find((c) => c.id === conversationId);
+      const notification: AppNotification = {
+        id: createId('ntf'),
+        conversationId,
+        messageId: message.id,
+        // Empty when the thread has no title yet; the UI falls back to a
+        // localized "New reply" so `core` stays locale-agnostic.
+        title: summary?.title ?? deriveTitle(get().messages) ?? '',
+        body: derivePreview([message]),
+        createdAt: Date.now(),
+        read: false,
+      };
+      set({
+        unread: { ...get().unread, [conversationId]: (get().unread[conversationId] ?? 0) + 1 },
+        notifications: [notification, ...get().notifications].slice(0, NOTIFICATION_HISTORY_MAX),
+      });
+      saveIndex();
     };
 
     const persistMessages = () => {
@@ -587,17 +669,38 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
      */
     async function runTurn(): Promise<void> {
       turnAborted = false;
-      for (let round = 0; round < MAX_FRONTEND_TOOL_ROUNDS; round++) {
-        await streamRun();
-        if (get().run.status !== 'completed') return;
+      // The conversation this turn belongs to + the assistant messages already
+      // present, so we can tell what the turn newly produced when it settles.
+      const conversationId = get().activeConversationId;
+      const seenAssistant = new Set(
+        get()
+          .messages.filter((m) => m.role === 'assistant')
+          .map((m) => m.id),
+      );
+      try {
+        for (let round = 0; round < MAX_FRONTEND_TOOL_ROUNDS; round++) {
+          await streamRun();
+          if (get().run.status !== 'completed') return;
 
-        const pending = collectPendingFrontendCalls(get().messages, registry.getAction);
-        if (pending.length === 0) return;
+          const pending = collectPendingFrontendCalls(get().messages, registry.getAction);
+          if (pending.length === 0) return;
 
-        await resolveFrontendCalls(pending);
-        // An abort during a confirmation wait stops the turn here rather than
-        // looping into another backend run.
-        if (turnAborted) return;
+          await resolveFrontendCalls(pending);
+          // An abort during a confirmation wait stops the turn here rather than
+          // looping into another backend run.
+          if (turnAborted) return;
+        }
+      } finally {
+        // On a completed turn, notify for the last new assistant reply that has
+        // visible text (skips empty / tool-only turns). Only when the thread is
+        // still active — a mid-turn switch already reset transient state.
+        if (get().run.status === 'completed' && get().activeConversationId === conversationId) {
+          const fresh = get().messages.filter(
+            (m) => m.role === 'assistant' && !seenAssistant.has(m.id) && messageText(m).trim(),
+          );
+          const last = fresh[fresh.length - 1];
+          if (last) recordAssistantReply(last, conversationId);
+        }
       }
     }
 
@@ -629,7 +732,7 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         actionConfirmations: [],
         csat: { status: 'idle' },
       });
-      persistence?.saveConversationIndex({ activeId: id, summaries: get().conversations });
+      saveIndex();
       if (!persistence) return;
       void persistence
         .loadMessages(id)
@@ -678,6 +781,8 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
       artifacts: {},
       frontendTools: registry.actionNames(),
       actionConfirmations: [],
+      unread: initialUnread,
+      notifications: initialNotifications,
       csat: { status: 'idle' },
 
       async sendMessage(text, extraParts = []) {
@@ -774,6 +879,9 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         const summaries = get().conversations.map((c) =>
           c.id === activeId ? { id: c.id, createdAt: c.createdAt, updatedAt: Date.now() } : c,
         );
+        // The thread is now empty — drop its unread watermark + notifications.
+        const unread = { ...get().unread };
+        delete unread[activeId];
         set({
           messages: [],
           run: { status: 'idle' },
@@ -782,8 +890,10 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
           actionConfirmations: [],
           csat: { status: 'idle' },
           conversations: summaries,
+          unread,
+          notifications: get().notifications.filter((n) => n.conversationId !== activeId),
         });
-        persistence?.saveConversationIndex({ activeId, summaries });
+        saveIndex();
         void persistence?.clearConversation(activeId);
       },
 
@@ -806,17 +916,18 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         if (!summaries.some((c) => c.id === id)) return;
         void persistence?.clearConversation(id);
         const remaining = summaries.filter((c) => c.id !== id);
+        // Drop the deleted thread's unread watermark + notifications.
+        const unread = { ...get().unread };
+        delete unread[id];
+        const notifications = get().notifications.filter((n) => n.conversationId !== id);
         if (id === get().activeConversationId) {
           // Fall back to the most recent remaining thread, or a fresh empty one.
           const nextSummaries = remaining.length > 0 ? remaining : [freshConversationSummary()];
-          set({ conversations: nextSummaries });
+          set({ conversations: nextSummaries, unread, notifications });
           activate(nextSummaries[0]!.id);
         } else {
-          set({ conversations: remaining });
-          persistence?.saveConversationIndex({
-            activeId: get().activeConversationId,
-            summaries: remaining,
-          });
+          set({ conversations: remaining, unread, notifications });
+          saveIndex();
         }
       },
 
@@ -826,7 +937,67 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
           c.id === id ? { ...c, title: trimmed || undefined, updatedAt: Date.now() } : c,
         );
         set({ conversations: summaries });
-        persistence?.saveConversationIndex({ activeId: get().activeConversationId, summaries });
+        saveIndex();
+      },
+
+      pinConversation(id, pinned) {
+        if (!get().conversations.some((c) => c.id === id)) return;
+        // Pinning is orthogonal to recency — don't bump `updatedAt`, so a pinned
+        // thread keeps its real last-activity time when later unpinned.
+        set({
+          conversations: get().conversations.map((c) => (c.id === id ? { ...c, pinned } : c)),
+        });
+        saveIndex();
+      },
+
+      archiveConversation(id, archived) {
+        if (!get().conversations.some((c) => c.id === id)) return;
+        set({
+          conversations: get().conversations.map((c) => (c.id === id ? { ...c, archived } : c)),
+        });
+        saveIndex();
+      },
+
+      markConversationRead(id) {
+        const hadUnread = (get().unread[id] ?? 0) > 0;
+        const hasUnreadNotif = get().notifications.some((n) => n.conversationId === id && !n.read);
+        if (!hadUnread && !hasUnreadNotif) return;
+        const unread = { ...get().unread };
+        delete unread[id];
+        set({
+          unread,
+          notifications: get().notifications.map((n) =>
+            n.conversationId === id && !n.read ? { ...n, read: true } : n,
+          ),
+        });
+        saveIndex();
+      },
+
+      markNotificationRead(id) {
+        const target = get().notifications.find((n) => n.id === id);
+        if (!target || target.read) return;
+        // Reading a single entry also draws down that conversation's unread count
+        // so the launcher badge and bell agree.
+        const unread = { ...get().unread };
+        const remaining = (unread[target.conversationId] ?? 0) - 1;
+        if (remaining > 0) unread[target.conversationId] = remaining;
+        else delete unread[target.conversationId];
+        set({
+          unread,
+          notifications: get().notifications.map((n) => (n.id === id ? { ...n, read: true } : n)),
+        });
+        saveIndex();
+      },
+
+      markAllNotificationsRead() {
+        const hasUnread =
+          get().notifications.some((n) => !n.read) || Object.keys(get().unread).length > 0;
+        if (!hasUnread) return;
+        set({
+          unread: {},
+          notifications: get().notifications.map((n) => (n.read ? n : { ...n, read: true })),
+        });
+        saveIndex();
       },
 
       setAgentState(next) {
@@ -884,6 +1055,8 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         };
         set({ messages: [...get().messages, message] });
         persistMessages();
+        // A proactive nudge is a notification-worthy arrival too (badge + bell).
+        recordAssistantReply(message, get().activeConversationId);
       },
 
       requestCsat() {
@@ -948,7 +1121,13 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
               : c,
           );
           store.setState({ messages: loaded, conversations: summaries });
-          persistence.saveConversationIndex({ activeId, summaries });
+          const state = store.getState();
+          persistence.saveConversationIndex({
+            activeId,
+            summaries,
+            unread: state.unread,
+            notifications: state.notifications,
+          });
         }
       } catch {
         /* corrupt / unavailable store — start fresh */

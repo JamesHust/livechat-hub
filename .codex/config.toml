@@ -1,0 +1,9 @@
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+TURBO_TELEMETRY_DISABLED = "1"
+DO_NOT_TRACK = "1"
+
+[mcp_servers.docs-langchain]
+url = "https://docs.langchain.com/mcp"

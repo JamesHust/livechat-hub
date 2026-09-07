@@ -22,6 +22,16 @@ export const LOCALE_STORAGE_KEY = 'livechat-hub:locale';
 /** localStorage key under which the end-user's chosen color-scheme is persisted. */
 export const THEME_STORAGE_KEY = 'livechat-hub:theme';
 
+/** localStorage key: end-user's notification-sound preference (`'on'` / `'off'`). */
+export const NOTIFY_SOUND_STORAGE_KEY = 'livechat-hub:notify-sound';
+
+/**
+ * Cap on how many notifications the in-widget notification center keeps (and
+ * persists). Newest are retained; older ones fall off — the bell is a recent
+ * inbox, not an unbounded log, so it never grows the sync-storage footprint.
+ */
+export const NOTIFICATION_HISTORY_MAX = 50;
+
 /** Default SSE path appended to `apiUrl` for opening an agent run. */
 export const DEFAULT_RUN_PATH = '/agent/run';
 
