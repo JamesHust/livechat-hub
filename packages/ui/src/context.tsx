@@ -19,6 +19,7 @@ import {
   THEME_STORAGE_KEY,
   type Locale,
   type MessageFeedback,
+  type NotificationConfig,
   type StringKey,
   type ThemeMode,
   type ThemeOverrides,
@@ -51,6 +52,12 @@ export interface ChatContextValue {
   uploadFile?: UploadFn;
   /** Static suggested prompts shown on the empty state (host-configured). */
   suggestions: string[];
+  /**
+   * Resolved notification preferences (host config with defaults applied). Drives
+   * which channels the UI surfaces — the launcher badge and the settings toggles.
+   * The SDK's controller owns actually firing sound / OS notifications.
+   */
+  notifications: NotificationConfig;
   /**
    * Notified when the end-user rates an assistant answer. `value` is `null` when
    * a previous rating was toggled off. Hosts use it for analytics / retraining.
@@ -111,6 +118,8 @@ export interface ChatProviderProps {
   uploadFile?: UploadFn;
   /** Suggested prompts shown on the empty state; clicking one sends it. */
   suggestions?: string[];
+  /** Notification preferences (badge / sound / desktop). See {@link NotificationConfig}. */
+  notifications?: NotificationConfig;
   /** Called when the end-user rates an assistant answer. See {@link ChatContextValue.onFeedback}. */
   onFeedback?: (messageId: string, value: MessageFeedback | null, message: UIMessage) => void;
   children: ReactNode;
@@ -126,6 +135,7 @@ export function ChatProvider({
   strings,
   uploadFile,
   suggestions,
+  notifications,
   onFeedback,
   children,
 }: ChatProviderProps) {
@@ -189,6 +199,15 @@ export function ChatProvider({
   );
   const t = useMemo(() => createTranslator(locale, strings), [locale, strings]);
   const resolvedSuggestions = useMemo(() => suggestions ?? [], [suggestions]);
+  // Only the badge has a default (on unless the host opts out). `sound` /
+  // `desktop` stay whatever the host passed — crucially `undefined` when unset,
+  // so the settings toggles distinguish "off by default, still offer it" from an
+  // explicit `false` ("host disabled the channel, hide it"). `updateConfig`
+  // re-resolves this (same pattern as `strings` / `suggestions` above).
+  const resolvedNotifications = useMemo<NotificationConfig>(
+    () => ({ badge: true, ...notifications }),
+    [notifications],
+  );
 
   const value = useMemo<ChatContextValue>(
     () => ({
@@ -202,6 +221,7 @@ export function ChatProvider({
       setThemeMode,
       uploadFile,
       suggestions: resolvedSuggestions,
+      notifications: resolvedNotifications,
       onFeedback,
     }),
     [
@@ -215,6 +235,7 @@ export function ChatProvider({
       setThemeMode,
       uploadFile,
       resolvedSuggestions,
+      resolvedNotifications,
       onFeedback,
     ],
   );

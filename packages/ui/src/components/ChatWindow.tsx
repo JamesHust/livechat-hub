@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { LazyMotion, m, useReducedMotion } from 'framer-motion';
 import { Header } from './Header';
 import { MessageList } from './MessageList';
@@ -8,10 +8,11 @@ import { InterruptPrompt } from './InterruptPrompt';
 import { ActionConfirmPrompt } from './ActionConfirmPrompt';
 import { CsatPrompt } from './CsatPrompt';
 import { ConversationList } from './ConversationList';
+import { NotificationCenter } from './NotificationCenter';
 import { ArtifactPanel } from './ArtifactPanel';
 import { Composer } from './Composer';
 import { WelcomeScreen } from './WelcomeScreen';
-import { useChatStore } from '../context';
+import { useChatContext, useChatStore } from '../context';
 import { useWidgetLayout } from '../hooks/use-widget-layout';
 import { cn } from '../lib/utils';
 import { domAnimation, PANEL_TRANSITION, panelVariants } from '../lib/motion';
@@ -55,8 +56,42 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
   useEffect(() => {
     if (!hasMessages) setSearchOpen(false);
   }, [hasMessages]);
+  // Mark the active thread read while it's genuinely on screen. This component
+  // is mounted only while the panel is open, so mounting means "viewing"; the
+  // effect re-fires as new messages stream in and when the tab regains focus, so
+  // a reply seen live never lingers as unread. `core` has no notion of
+  // visibility — this is the UI telling it what the user is actually looking at.
+  // `useLayoutEffect` runs before paint, so the launcher badge never flashes.
+  const { store } = useChatContext();
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  // The active thread's unread count is a dep so a reply that completes *while
+  // viewing* (it bumps unread without changing the message count) is cleared too.
+  const activeUnread = useChatStore((s) => s.unread[s.activeConversationId] ?? 0);
+  useLayoutEffect(() => {
+    const markIfVisible = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        store.getState().markConversationRead(activeConversationId);
+      }
+    };
+    markIfVisible();
+    document.addEventListener('visibilitychange', markIfVisible);
+    return () => document.removeEventListener('visibilitychange', markIfVisible);
+  }, [store, activeConversationId, activeUnread]);
+
   // Multi-thread conversation list (sheet over the panel).
   const [conversationsOpen, setConversationsOpen] = useState(false);
+  // In-widget notification center (bell inbox), a sheet over the panel.
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // Message the notification center asked to scroll to (cleared once shown).
+  const [jumpTo, setJumpTo] = useState<string | null>(null);
+  // Jump from a notification: switch threads if needed, then scroll to the
+  // message once the (possibly async-loaded) history is on screen.
+  const jumpToNotification = (conversationId: string, messageId?: string) => {
+    if (store.getState().activeConversationId !== conversationId) {
+      store.getState().switchConversation(conversationId);
+    }
+    if (messageId) setJumpTo(messageId);
+  };
   // Artifact panel — only offered once the agent has produced an artifact.
   const hasArtifacts = useChatStore((s) => Object.keys(s.artifacts).length > 0);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -106,13 +141,19 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
           }
           searchActive={searchOpen}
           onOpenConversations={!needsWelcome ? () => setConversationsOpen(true) : undefined}
+          onOpenNotifications={!needsWelcome ? () => setNotificationsOpen(true) : undefined}
           onOpenArtifacts={!needsWelcome && hasArtifacts ? () => setArtifactsOpen(true) : undefined}
         />
         {needsWelcome ? (
           <WelcomeScreen />
         ) : (
           <>
-            <MessageList searchOpen={searchOpen} onCloseSearch={() => setSearchOpen(false)} />
+            <MessageList
+              searchOpen={searchOpen}
+              onCloseSearch={() => setSearchOpen(false)}
+              jumpToMessageId={jumpTo}
+              onJumped={() => setJumpTo(null)}
+            />
             <HandoffBanner />
             <ErrorBar />
             <InterruptPrompt />
@@ -122,6 +163,11 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
             <ConversationList
               open={conversationsOpen}
               onClose={() => setConversationsOpen(false)}
+            />
+            <NotificationCenter
+              open={notificationsOpen}
+              onClose={() => setNotificationsOpen(false)}
+              onJump={jumpToNotification}
             />
             <ArtifactPanel open={artifactsOpen} onClose={() => setArtifactsOpen(false)} />
           </>

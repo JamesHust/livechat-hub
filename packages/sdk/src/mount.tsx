@@ -4,18 +4,21 @@ import { createSseTransport, createWebSocketTransport } from '@livechat-hub/tran
 import { applyThemeToElement, resolveTheme } from '@livechat-hub/themes';
 import { ChatProvider } from '@livechat-hub/ui';
 import {
+  createTranslator,
   HOST_ELEMENT_ID,
   readHandoff,
   readPresence,
   type LiveChatConfig,
   type Presence,
   type RunStatus,
+  type StringKey,
   type TelemetryEvent,
   type ThemeMode,
   type ThemeOverrides,
   type UserIdentity,
 } from '@livechat-hub/shared';
 import type { GenerativeComponentMap, RendererMap } from '@livechat-hub/renderers';
+import { createNotificationController } from './notifications';
 // `?inline` makes Vite return the compiled stylesheet as a string so we can
 // inject it into the Shadow DOM instead of the document head. This is the
 // Tailwind v4 + shadcn entry, compiled by `@tailwindcss/vite` at build time.
@@ -70,6 +73,12 @@ export interface WidgetInstance {
   sendProactiveMessage(text: string): void;
   /** Show the end-of-chat satisfaction (CSAT) prompt. Hosts observe `csat`. */
   requestCsat(): void;
+  /**
+   * Request OS/desktop notification permission. Must be called from a user
+   * gesture (e.g. a click handler) — browsers reject silent permission prompts.
+   * Resolves with the resulting permission, or `'denied'` when unsupported.
+   */
+  requestNotificationPermission(): Promise<NotificationPermission>;
   /**
    * Set / update the end-user identity at runtime (Intercom-style). Forwarded to
    * the agent on the next run; no re-init required. See {@link UserIdentity}.
@@ -250,6 +259,7 @@ export function mountWidget(options: MountOptions): WidgetInstance {
         strings={config.strings}
         uploadFile={config.uploadFile}
         suggestions={config.suggestions}
+        notifications={config.notifications}
         onFeedback={(messageId, value) => emitter.emit('feedback', { messageId, value })}
       >
         <WidgetShell
@@ -271,6 +281,23 @@ export function mountWidget(options: MountOptions): WidgetInstance {
 
   render();
   queueMicrotask(() => emitter.emit('ready', undefined));
+
+  // Notification bridge (composition root): mirrors unread / notification to the
+  // emitter and, when a reply lands while the user isn't looking, chimes + raises
+  // an OS notification. Reads `config` live so `updateConfig` retunes it without
+  // a re-init. Clicking an OS notification opens the panel on the right thread.
+  const stopNotifications = createNotificationController({
+    store,
+    emitter,
+    getConfig: () => config.notifications,
+    isPanelOpen: () => open,
+    getTranslate: () =>
+      createTranslator(config.locale ?? 'en', config.strings) as (k: StringKey) => string,
+    onActivate: (conversationId) => {
+      store.getState().switchConversation(conversationId);
+      setOpen(true);
+    },
+  });
 
   // Proactive/triggered greeting: after a delay, inject an assistant nudge (a
   // time-on-page trigger). Cleared on destroy so it never fires post-teardown.
@@ -294,6 +321,10 @@ export function mountWidget(options: MountOptions): WidgetInstance {
     registerContext: (provider) => store.getState().registerContext(provider),
     sendProactiveMessage: (text) => store.getState().addProactiveMessage(text),
     requestCsat: () => store.getState().requestCsat(),
+    requestNotificationPermission: () =>
+      typeof Notification !== 'undefined'
+        ? Notification.requestPermission()
+        : Promise.resolve<NotificationPermission>('denied'),
     identify: (user) => {
       store.getState().identify(user);
       emitter.emit('identify', user);
@@ -326,6 +357,7 @@ export function mountWidget(options: MountOptions): WidgetInstance {
     off: emitter.off.bind(emitter),
     destroy: () => {
       if (proactiveTimer !== undefined) clearTimeout(proactiveTimer);
+      stopNotifications();
       unsubscribe();
       reactRoot.unmount();
       emitter.emit('destroy', undefined);

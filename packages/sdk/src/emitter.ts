@@ -1,4 +1,5 @@
 import type {
+  AppNotification,
   CsatResult,
   HandoffState,
   MessageFeedback,
@@ -30,6 +31,14 @@ export interface WidgetEvents {
   handoff: HandoffState;
   /** The end-user submitted a CSAT rating. */
   csat: CsatResult;
+  /** Total unread count changed — for a host that renders its own badge. */
+  unread: { total: number };
+  /**
+   * A new notification was derived from a reply/event. Hosts with their own
+   * notification system listen here and set `notifications.desktop: false` to
+   * suppress the SDK's OS notification and handle it themselves.
+   */
+  notification: AppNotification;
 }
 
 export type EventName = keyof WidgetEvents;

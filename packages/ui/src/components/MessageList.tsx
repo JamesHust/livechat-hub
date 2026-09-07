@@ -32,9 +32,18 @@ export interface MessageListProps {
   searchOpen?: boolean;
   /** Close the search bar (e.g. Escape inside it). */
   onCloseSearch?: () => void;
+  /** Message id to scroll into view (e.g. from the notification center). */
+  jumpToMessageId?: string | null;
+  /** Called once the jump target has been scrolled into view. */
+  onJumped?: () => void;
 }
 
-export function MessageList({ searchOpen = false, onCloseSearch }: MessageListProps = {}) {
+export function MessageList({
+  searchOpen = false,
+  onCloseSearch,
+  jumpToMessageId,
+  onJumped,
+}: MessageListProps = {}) {
   const { store } = useChatContext();
   const messages = useChatStore((s) => s.messages);
   const status = useChatStore((s) => s.run.status);
@@ -66,12 +75,27 @@ export function MessageList({ searchOpen = false, onCloseSearch }: MessageListPr
   // Bring the active match into view (centered) as the user steps through hits.
   useEffect(() => {
     if (!searchOpen || !activeMatchId) return;
-    const node = scrollerRef.current?.querySelector(`[data-message-id="${CSS.escape(activeMatchId)}"]`);
+    const node = scrollerRef.current?.querySelector(
+      `[data-message-id="${CSS.escape(activeMatchId)}"]`,
+    );
     node?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
   }, [searchOpen, activeMatchId, reduced]);
 
   const stepMatch = (delta: number) =>
     setActiveMatch((i) => (matches.length ? (i + delta + matches.length) % matches.length : 0));
+
+  // Jump-to (from the notification center): scroll a specific message into view.
+  // Retries as `messages` change so it still works right after switching threads
+  // (the target thread's history hydrates asynchronously).
+  useEffect(() => {
+    if (!jumpToMessageId) return;
+    const node = scrollerRef.current?.querySelector(
+      `[data-message-id="${CSS.escape(jumpToMessageId)}"]`,
+    );
+    if (!node) return;
+    node.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
+    onJumped?.();
+  }, [jumpToMessageId, messages, reduced, onJumped]);
 
   const lastMessage = messages[messages.length - 1];
   const isStreaming = status === 'running';

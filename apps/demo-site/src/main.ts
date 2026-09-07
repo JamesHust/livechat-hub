@@ -70,6 +70,12 @@ const widget = LiveChatHub.init({
   },
   // Proactive/triggered greeting: nudge after 10s on the page (a time trigger).
   proactive: { message: '👋 Looking for something? Ask me anything.', delayMs: 10_000 },
+  // Notifications: launcher badge + chime + OS/desktop notifications when a reply
+  // lands while the panel is closed or the tab is backgrounded. Toggle sound in
+  // the widget's settings; enable desktop notifications there too (asks for OS
+  // permission from a user gesture). Ask the weather, then close the panel or
+  // switch tabs to see the badge + chime + desktop notification arrive.
+  notifications: { badge: true, sound: true, desktop: true, showPreview: true },
 });
 
 widget.on('ready', () => line('widget ready'));
@@ -84,6 +90,8 @@ widget.on('feedback', (f) =>
 widget.on('presence', (p) => line(`presence → ${p}`));
 widget.on('handoff', (h) => line(`handoff → ${h.status}${h.agentName ? ` (${h.agentName})` : ''}`));
 widget.on('csat', (c) => line(`csat → ${c.rating}★${c.comment ? ` "${c.comment}"` : ''}`));
+widget.on('unread', ({ total }) => line(`unread → ${total}`));
+widget.on('notification', (n) => line(`notification → ${n.title || 'New reply'}`));
 
 let dark = false;
 document.getElementById('open')?.addEventListener('click', () => widget.toggle());

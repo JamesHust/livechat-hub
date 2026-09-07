@@ -16,7 +16,9 @@ export { InterruptPrompt } from './components/InterruptPrompt';
 export { ActionConfirmPrompt } from './components/ActionConfirmPrompt';
 export { CsatPrompt } from './components/CsatPrompt';
 export { ConversationList, type ConversationListProps } from './components/ConversationList';
+export { NotificationCenter, type NotificationCenterProps } from './components/NotificationCenter';
 export { ArtifactPanel, type ArtifactPanelProps } from './components/ArtifactPanel';
+export { readSoundPref, writeSoundPref, soundEnabled } from './lib/notify-prefs';
 export { TypingIndicator } from './components/TypingIndicator';
 export {
   WidgetLayoutProvider,

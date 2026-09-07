@@ -125,6 +125,22 @@ consequential one behind a user confirmation) and starts a **follow-up run** wit
 the tool's `tool-result` already in `messages` — read it and continue. This is
 the same wire shape as a backend tool; only the missing result distinguishes it.
 
+## Conversation history & notifications (client-side)
+
+Multi-thread history, the unread watermark, and the notification center are all
+**client-side and provider-agnostic** — derived from the ordinary message stream
+(a completed reply / `RUN_FINISHED`), never from a bespoke event. There is
+nothing new to emit: the backend keeps streaming turns as usual and the frontend
+tracks unread counts, badges the launcher, chimes, and raises OS notifications on
+its own.
+
+History persists per-conversation in the browser (IndexedDB, keyed by
+`threadId`). **Multi-device sync is an optional backend feature**: if you expose
+a "list conversations / fetch a thread" API, a deployment can hydrate the sidebar
+from the server instead of local storage. The frontend only ever _consumes_
+conversation history — it does not invent a sync protocol, so the shape of such
+an endpoint is entirely up to the backend.
+
 ## Resilience & reconnection
 
 The SSE transport is built to survive flaky networks. The backend should

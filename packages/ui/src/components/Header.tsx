@@ -1,6 +1,8 @@
 import {
   IconArrowsMaximize,
   IconArrowsMinimize,
+  IconBell,
+  IconBellRinging,
   IconLayoutSidebarRight,
   IconMessages,
   IconSearch,
@@ -33,6 +35,8 @@ export interface HeaderProps {
   searchActive?: boolean;
   /** Open the multi-thread conversation list; omit to hide the control. */
   onOpenConversations?: () => void;
+  /** Open the notification center (bell inbox); omit to hide the control. */
+  onOpenNotifications?: () => void;
   /** Open the artifact panel; omit to hide the control (e.g. no artifacts yet). */
   onOpenArtifacts?: () => void;
 }
@@ -44,10 +48,15 @@ export function Header({
   onToggleSearch,
   searchActive,
   onOpenConversations,
+  onOpenNotifications,
   onOpenArtifacts,
 }: HeaderProps) {
   const { t } = useChatContext();
   const { chromeButton, chromeIcon } = useControlSize();
+  // Bell badge: number of unread notification-center entries.
+  const unreadNotifications = useChatStore((s) =>
+    s.notifications.reduce((n, x) => n + (x.read ? 0 : 1), 0),
+  );
   // Presence + human-agent handoff are backend-driven, published into the shared
   // agent state (no bespoke protocol events). Once connected to a human, the
   // header adopts their name.
@@ -94,6 +103,31 @@ export function Header({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {onOpenNotifications && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onOpenNotifications}
+            aria-label={t('notify.open')}
+            className={cn('text-muted-foreground relative', chromeButton)}
+          >
+            {unreadNotifications > 0 ? (
+              <IconBellRinging className={chromeIcon} aria-hidden="true" />
+            ) : (
+              <IconBell className={chromeIcon} aria-hidden="true" />
+            )}
+            {unreadNotifications > 0 && (
+              <span
+                aria-hidden="true"
+                style={{ backgroundColor: 'var(--lch-danger)' }}
+                className="text-on-gradient ring-card absolute top-0.5 right-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold ring-2"
+              >
+                {unreadNotifications > 9 ? '9+' : unreadNotifications}
+              </span>
+            )}
+          </Button>
+        )}
         {onOpenArtifacts && (
           <Button
             type="button"

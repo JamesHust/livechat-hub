@@ -222,6 +222,9 @@ export interface ChatActions {
 
 export type ChatStore = ChatState & ChatActions;
 
+/** The vanilla store handle returned by {@link createChatStore}. */
+export type ChatStoreApi = StoreApi<ChatStore>;
+
 export interface CreateChatStoreOptions {
   transport: Transport;
   tenantId: string;
@@ -1121,12 +1124,12 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
               : c,
           );
           store.setState({ messages: loaded, conversations: summaries });
-          const state = store.getState();
+          const hydrated = store.getState();
           persistence.saveConversationIndex({
             activeId,
             summaries,
-            unread: state.unread,
-            notifications: state.notifications,
+            unread: hydrated.unread,
+            notifications: hydrated.notifications,
           });
         }
       } catch {

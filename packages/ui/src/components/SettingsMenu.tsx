@@ -1,15 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { AnimatePresence, m, useReducedMotion } from 'framer-motion';
 import {
+  IconBell,
   IconDeviceDesktop,
   IconMoon,
   IconSettings,
   IconSun,
+  IconVolume,
+  IconVolumeOff,
   type IconProps,
 } from '@tabler/icons-react';
 import type { ThemeMode } from '@livechat-hub/shared';
 import { useChatContext } from '../context';
 import { useControlSize } from '../hooks/use-control-size';
+import { soundEnabled, writeSoundPref } from '../lib/notify-prefs';
 import { cn } from '../lib/utils';
 import { ITEM_TRANSITION } from '../lib/motion';
 import { Button } from './ui/button';
@@ -122,9 +126,118 @@ export function SettingsMenu() {
               </p>
               <LanguageSwitcher />
             </section>
+
+            <NotificationSettings />
           </m.div>
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * The "Notifications" section of the settings popover: a sound on/off toggle
+ * (6.5) and a desktop-notification permission control (6.6). Both surfaces are
+ * pure Web APIs (localStorage + the Notification API), so they work inside the
+ * Shadow DOM; the SDK's controller reads the same signals to decide when to
+ * chime / raise an OS notification. Channels the host disabled via
+ * `notifications` config are hidden.
+ */
+function NotificationSettings() {
+  const { t, notifications } = useChatContext();
+  const [soundOn, setSoundOn] = useState(() => soundEnabled(notifications.sound ?? false));
+  // Current OS permission, when the Notification API exists. `null` → unsupported
+  // (or the host hid the channel) → the desktop row isn't rendered.
+  const notificationApi = typeof Notification !== 'undefined' ? Notification : null;
+  const [permission, setPermission] = useState<NotificationPermission | null>(
+    notificationApi ? notificationApi.permission : null,
+  );
+
+  const soundVisible = notifications.sound !== false;
+  const desktopVisible = notifications.desktop !== false && notificationApi !== null;
+  if (!soundVisible && !desktopVisible) return null;
+
+  const toggleSound = () => {
+    setSoundOn((on) => {
+      const next = !on;
+      writeSoundPref(next);
+      return next;
+    });
+  };
+
+  const requestPermission = () => {
+    // Must run from this user gesture — browsers reject silent permission asks.
+    void notificationApi?.requestPermission().then((result) => setPermission(result));
+  };
+
+  return (
+    <>
+      <div className="bg-border mx-1.5 my-2 h-px" />
+      <section className="px-1.5 pb-1.5">
+        <p className="text-muted-foreground m-0 mb-1.5 px-0.5 text-[11px] font-semibold tracking-wide uppercase">
+          {t('settings.notifications')}
+        </p>
+
+        {soundVisible && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={soundOn}
+            onClick={toggleSound}
+            className="hover:bg-muted/60 focus-visible:ring-ring/60 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm outline-none transition-colors focus-visible:ring-2"
+          >
+            {soundOn ? (
+              <IconVolume className="text-foreground size-[18px] shrink-0" aria-hidden="true" />
+            ) : (
+              <IconVolumeOff
+                className="text-muted-foreground size-[18px] shrink-0"
+                aria-hidden="true"
+              />
+            )}
+            <span className="text-foreground flex-1">{t('settings.sound')}</span>
+            {/* Track + knob toggle, colored via the accent gradient when on. */}
+            <span
+              aria-hidden="true"
+              style={soundOn ? { backgroundImage: 'var(--lch-gradient)' } : undefined}
+              className={cn(
+                'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors',
+                soundOn ? '' : 'bg-secondary',
+              )}
+            >
+              <span
+                className={cn(
+                  'bg-background inline-block size-4 rounded-full shadow-sm transition-transform',
+                  soundOn ? 'translate-x-4' : 'translate-x-0.5',
+                )}
+              />
+            </span>
+          </button>
+        )}
+
+        {desktopVisible && (
+          <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm">
+            <IconBell className="text-muted-foreground size-[18px] shrink-0" aria-hidden="true" />
+            <span className="text-foreground flex-1">{t('settings.desktop')}</span>
+            {permission === 'granted' ? (
+              <span className="text-muted-foreground text-xs font-medium">
+                {t('notify.enabled')}
+              </span>
+            ) : permission === 'denied' ? (
+              <span className="text-muted-foreground text-xs font-medium">
+                {t('notify.blocked')}
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={requestPermission}
+                className="text-primary hover:bg-primary/10 focus-visible:ring-ring/60 rounded-md px-2 py-1 text-xs font-semibold outline-none transition-colors focus-visible:ring-2"
+              >
+                {t('notify.enable')}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    </>
   );
 }

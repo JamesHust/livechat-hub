@@ -17,6 +17,8 @@ export type {
   UserIdentity,
   TelemetryEvent,
   AnalyticsConfig,
+  NotificationConfig,
+  AppNotification,
 } from '@livechat-hub/shared';
 export type { FrontendAction, FrontendActionHandler, ContextProvider } from '@livechat-hub/core';
 export type {
@@ -95,6 +97,13 @@ export const LiveChatHub = {
   /** Show the CSAT prompt on the active widget. */
   requestCsat(): void {
     current?.requestCsat();
+  },
+  /**
+   * Request OS/desktop notification permission on the active widget. Call from a
+   * user gesture. Resolves `'denied'` before `init` or when unsupported.
+   */
+  requestNotificationPermission(): Promise<NotificationPermission> {
+    return current?.requestNotificationPermission() ?? Promise.resolve('denied');
   },
   /** Patch the active widget's presentation config at runtime. */
   updateConfig(patch: UpdatableConfig): void {

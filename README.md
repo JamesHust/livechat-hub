@@ -268,6 +268,36 @@ LiveChatHub.requestCsat();
 LiveChatHub.on('csat', ({ rating, comment }) => analytics.track('csat', { rating, comment }));
 ```
 
+### Notifications
+
+When a reply lands while the panel is closed or the tab is backgrounded, the
+widget can badge the launcher, play a short chime, and raise an OS notification.
+An in-widget **bell** (header) keeps a recent inbox; clicking an entry jumps to
+the message. Every channel is opt-in — the launcher badge is the only default.
+
+```js
+LiveChatHub.init({
+  apiUrl: 'https://api.example.com',
+  tenantId: 'tenant_123',
+  notifications: {
+    badge: true, // unread count on the launcher (default on)
+    sound: true, // chime; the end-user can toggle it in the widget settings
+    desktop: true, // OS notifications (still gated on the permission below)
+    showPreview: false, // keep message text out of OS notifications (default)
+  },
+});
+
+// OS notifications need permission — request it from a user gesture:
+button.onclick = () => LiveChatHub.requestNotificationPermission();
+
+// Or render your own UI and suppress the built-in OS notification with
+// `notifications.desktop: false`, then react to the events yourself:
+LiveChatHub.on('unread', ({ total }) => setBadge(total));
+LiveChatHub.on('notification', (n) => myInbox.add(n));
+```
+
+`updateConfig({ notifications })` retunes the channels live, without a re-init.
+
 ### Hardening & distribution
 
 - **CSP + auth + storage model:** see [`SECURITY.md`](SECURITY.md) for the
