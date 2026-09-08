@@ -5,6 +5,7 @@ import {
   createTranslator,
   dictionaries,
   getDictionary,
+  isRtlLocale,
   localeNames,
 } from './index';
 
@@ -28,6 +29,15 @@ describe('i18n', () => {
     expect(createTranslator('ja')('composer.send')).toBe('送信');
     expect(createTranslator('zh')('composer.send')).toBe('发送');
     expect(createTranslator('id')('composer.send')).toBe('Kirim');
+    expect(createTranslator('ar')('composer.send')).toBe('إرسال');
+    expect(createTranslator('he')('composer.send')).toBe('שליחה');
+  });
+
+  it('marks Arabic and Hebrew as right-to-left, others left-to-right', () => {
+    expect(isRtlLocale('ar')).toBe(true);
+    expect(isRtlLocale('he')).toBe(true);
+    expect(isRtlLocale('en')).toBe(false);
+    expect(isRtlLocale('ja')).toBe(false);
   });
 
   it('exposes a native display name for every available locale', () => {

@@ -128,7 +128,7 @@ export function ChatWindow({ onClose }: ChatWindowProps) {
           'lch-panel bg-background supports-[backdrop-filter]:bg-background fixed z-[2147483000] flex flex-col overflow-hidden border shadow-[var(--lch-shadow)] backdrop-blur-2xl',
           isFullscreen
             ? 'inset-0 h-full max-h-none w-full max-w-none rounded-none'
-            : 'right-5 bottom-22 h-[600px] max-h-[calc(100vh-120px)] w-95 max-w-[calc(100vw-40px)]',
+            : 'right-5 bottom-22 h-[600px] max-h-[calc(100vh-120px)] w-95 max-w-[calc(100vw-40px)] rtl:right-auto rtl:left-5',
           !isFullscreen && (layout.isMobile ? 'rounded-none' : 'rounded-lg'),
         )}
       >

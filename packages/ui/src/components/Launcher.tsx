@@ -64,7 +64,7 @@ export function Launcher({ open, onToggle }: LauncherProps) {
         style={{ backgroundImage: 'var(--lch-gradient)', ...layout.launcherStyle }}
         className={cn(
           buttonVariants({ size: 'icon' }),
-          "text-on-gradient ring-on-gradient/25 fixed right-5 bottom-5 z-[2147483000] size-14 rounded-full shadow-[var(--lch-shadow)] ring-1 ring-inset [&_svg:not([class*='size-'])]:size-7",
+          "text-on-gradient ring-on-gradient/25 fixed right-5 bottom-5 z-[2147483000] size-14 rounded-full shadow-[var(--lch-shadow)] ring-1 ring-inset rtl:right-auto rtl:left-5 [&_svg:not([class*='size-'])]:size-7",
         )}
       >
         {/* Crossfade + quarter-turn between the open/close glyphs. */}

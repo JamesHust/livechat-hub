@@ -923,6 +923,28 @@ describe('unread + notifications', () => {
     expect(reopened.getState().notifications).toHaveLength(1);
   });
 
+  it('full-text search matches a message body in an inactive thread', async () => {
+    const { transport } = scriptedTransport([OK_RUN, OK_RUN_2, OK_RUN]);
+    const storage = memoryStorage();
+    const store = createChatStore({ transport, tenantId: 't1', storage });
+    await flush();
+    const firstId = store.getState().activeConversationId;
+    await store.getState().sendMessage('first apple');
+    await store.getState().sendMessage('middle banana split');
+    await flush();
+    store.getState().newConversation();
+    await store.getState().sendMessage('other thread');
+    await flush();
+
+    // "banana" is only in the first thread's 2nd user message — not its title
+    // (first msg) or preview (last msg) — so this exercises the history load.
+    expect(await store.getState().searchConversationsFullText('banana')).toEqual([firstId]);
+    // An empty query returns every conversation.
+    expect(await store.getState().searchConversationsFullText('')).toHaveLength(2);
+    // A term in no thread returns nothing.
+    expect(await store.getState().searchConversationsFullText('zzz')).toEqual([]);
+  });
+
   it('pins and archives a conversation, and persists the flags', async () => {
     const storage = memoryStorage();
     const store = createChatStore({ transport: fakeTransport(OK_RUN), tenantId: 't1', storage });
@@ -940,5 +962,64 @@ describe('unread + notifications', () => {
     const restored = reopened.getState().conversations.find((c) => c.id === id)!;
     expect(restored.pinned).toBe(true);
     expect(restored.archived).toBe(true);
+  });
+});
+
+describe('reactions / edit / delete', () => {
+  it('toggles emoji reactions on a message', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('hi');
+    const id = store.getState().messages[0]!.id;
+
+    store.getState().toggleReaction(id, '👍');
+    store.getState().toggleReaction(id, '❤️');
+    expect(store.getState().messages[0]?.metadata?.reactions).toEqual(['👍', '❤️']);
+
+    store.getState().toggleReaction(id, '👍');
+    expect(store.getState().messages[0]?.metadata?.reactions).toEqual(['❤️']);
+
+    // Removing the last reaction clears the array entirely.
+    store.getState().toggleReaction(id, '❤️');
+    expect(store.getState().messages[0]?.metadata?.reactions).toBeUndefined();
+  });
+
+  it('edits a message text in place and flags it edited', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('helo');
+    const id = store.getState().messages[0]!.id;
+
+    store.getState().editMessage(id, '  hello world  ');
+    const msg = store.getState().messages.find((m) => m.id === id)!;
+    expect(msg.parts).toEqual([{ type: 'text', text: 'hello world' }]);
+    expect(msg.metadata?.edited).toBe(true);
+
+    // Empty text is a no-op.
+    store.getState().editMessage(id, '   ');
+    expect(store.getState().messages.find((m) => m.id === id)?.parts[0]).toMatchObject({
+      text: 'hello world',
+    });
+  });
+
+  it('deletes a message from the conversation', async () => {
+    const store = createChatStore({
+      transport: fakeTransport(OK_RUN),
+      tenantId: 't1',
+      storage: null,
+    });
+    await store.getState().sendMessage('hi');
+    expect(store.getState().messages).toHaveLength(2);
+
+    const assistantId = store.getState().messages[1]!.id;
+    store.getState().deleteMessage(assistantId);
+    expect(store.getState().messages).toHaveLength(1);
+    expect(store.getState().messages.some((m) => m.id === assistantId)).toBe(false);
   });
 });

@@ -154,6 +154,10 @@ export interface MessageMetadata {
   status?: MessageStatus;
   /** End-user rating of an assistant answer, when given. */
   feedback?: MessageFeedback;
+  /** Emoji reactions the end-user added to the message (toggleable). */
+  reactions?: string[];
+  /** Set once a message's text has been edited in place (human-chat editing). */
+  edited?: boolean;
   [key: string]: unknown;
 }
 

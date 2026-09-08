@@ -4,11 +4,13 @@ import { vi } from './vi';
 import { ja } from './ja';
 import { zh } from './zh';
 import { id } from './id';
+import { ar } from './ar';
+import { he } from './he';
 
 export type { Dictionary, StringKey };
-export { en, vi, ja, zh, id };
+export { en, vi, ja, zh, id, ar, he };
 
-export const dictionaries: Record<Locale, Dictionary> = { en, vi, ja, zh, id };
+export const dictionaries: Record<Locale, Dictionary> = { en, vi, ja, zh, id, ar, he };
 
 /** Native display name for each locale, for language pickers. */
 export const localeNames: Record<Locale, string> = {
@@ -17,10 +19,20 @@ export const localeNames: Record<Locale, string> = {
   ja: '日本語',
   zh: '中文',
   id: 'Bahasa Indonesia',
+  ar: 'العربية',
+  he: 'עברית',
 };
 
 /** Selectable locales in display order. */
-export const availableLocales: Locale[] = ['en', 'vi', 'ja', 'zh', 'id'];
+export const availableLocales: Locale[] = ['en', 'vi', 'ja', 'zh', 'id', 'ar', 'he'];
+
+/** Right-to-left locales — the widget flips `dir` for these. */
+const RTL_LOCALES: ReadonlySet<Locale> = new Set<Locale>(['ar', 'he']);
+
+/** Whether a locale is written right-to-left (drives `dir="rtl"` on the root). */
+export function isRtlLocale(locale: Locale): boolean {
+  return RTL_LOCALES.has(locale);
+}
 
 export function getDictionary(locale: Locale): Dictionary {
   return dictionaries[locale] ?? en;

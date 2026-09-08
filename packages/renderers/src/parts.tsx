@@ -11,14 +11,19 @@ import type {
   ToolResultPart,
   VideoPart,
 } from '@livechat-hub/shared';
+import { useState } from 'react';
 import {
   IconAlertTriangle,
   IconCheck,
   IconClick,
+  IconDownload,
+  IconEye,
+  IconEyeOff,
   IconFile,
   IconLoader2,
   IconPuzzle,
   IconTool,
+  IconWorld,
 } from '@tabler/icons-react';
 import { renderMarkdown } from './markdown';
 import type { RendererProps } from './types';
@@ -35,6 +40,10 @@ function humanizeToolName(name: string): string {
     .trim();
   if (!spaced) return name;
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function TextRenderer({ part }: RendererProps<TextPart>) {
@@ -59,12 +68,18 @@ export function ReasoningRenderer({ part, context }: RendererProps<ReasoningPart
  */
 export function ToolCallRenderer({ part, context }: RendererProps<ToolCallPart>) {
   const isFrontend = context.frontendToolNames?.includes(part.toolName) ?? false;
+  // `web.*` tools are the (backend/sandbox) browser-use flow — surface them as a
+  // browsing step. This is pure presentation over the generic tool-call wire
+  // shape, so the frontend stays provider-agnostic (and the renderer overridable).
+  const isWeb = part.toolName.startsWith('web.');
   const running = part.state === 'partial' || part.state === 'input-available';
   const errored = part.state === 'error';
   const label = humanizeToolName(part.toolName);
   const args = typeof part.args === 'string' ? part.args : JSON.stringify(part.args, null, 2);
   const hasArgs = Boolean(args) && args !== '""' && args !== '{}' && args.trim() !== '';
-  const kindLabel = context.t(isFrontend ? 'message.pageAction' : 'message.toolCall');
+  const kindLabel = context.t(
+    isWeb ? 'message.webAction' : isFrontend ? 'message.pageAction' : 'message.toolCall',
+  );
 
   return (
     <div
@@ -82,7 +97,13 @@ export function ToolCallRenderer({ part, context }: RendererProps<ToolCallPart>)
         )}
         <span className="lch-tool__name">{label}</span>
         <span className="lch-tool__badge">
-          {isFrontend ? <IconClick size={13} aria-hidden="true" /> : <IconTool size={13} aria-hidden="true" />}
+          {isWeb ? (
+            <IconWorld size={13} aria-hidden="true" />
+          ) : isFrontend ? (
+            <IconClick size={13} aria-hidden="true" />
+          ) : (
+            <IconTool size={13} aria-hidden="true" />
+          )}
           {kindLabel}
         </span>
       </div>
@@ -97,6 +118,30 @@ export function ToolCallRenderer({ part, context }: RendererProps<ToolCallPart>)
 }
 
 export function ToolResultRenderer({ part, context }: RendererProps<ToolResultPart>) {
+  // Browser-use step result: when a `web.*` tool returns a screenshot, show the
+  // captured page as a thumbnail (+ its url/title) instead of a raw JSON dump.
+  const web = part.toolName.startsWith('web.') && isRecord(part.result) ? part.result : null;
+  if (web && typeof web.screenshot === 'string') {
+    const screenshot = web.screenshot;
+    const pageUrl = typeof web.url === 'string' ? web.url : undefined;
+    const pageTitle = typeof web.title === 'string' ? web.title : undefined;
+    return (
+      <div className="lch-part lch-tool lch-web" data-error={part.isError ? 'true' : undefined}>
+        <div className="lch-tool__head" title={context.t('message.toolResult')}>
+          <IconWorld size={ICON_SIZE} aria-hidden="true" />
+          <span className="lch-tool__name">{pageTitle ?? humanizeToolName(part.toolName)}</span>
+        </div>
+        <img
+          className="lch-media lch-web__shot"
+          src={screenshot}
+          alt={pageTitle ?? context.t('message.screenshot')}
+          loading="lazy"
+        />
+        {pageUrl && <span className="lch-web__url">{pageUrl}</span>}
+      </div>
+    );
+  }
+
   const result =
     typeof part.result === 'string' ? part.result : JSON.stringify(part.result, null, 2);
   return (
@@ -144,19 +189,87 @@ export function AudioRenderer({ part, context }: RendererProps<AudioPart>) {
   );
 }
 
-export function FileRenderer({ part }: RendererProps<FilePart>) {
+export function FileRenderer({ part, context }: RendererProps<FilePart>) {
+  const { t } = context;
+  const isPdf = part.mimeType === 'application/pdf' || /\.pdf$/i.test(part.name);
+
+  // Non-PDF files stay a simple download chip.
+  if (!isPdf) {
+    return (
+      <a
+        className="lch-part lch-file"
+        href={part.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        download={part.name}
+      >
+        <IconFile size={ICON_SIZE} aria-hidden="true" />
+        <span>{part.name}</span>
+        {typeof part.size === 'number' && <span>({formatBytes(part.size)})</span>}
+      </a>
+    );
+  }
+
+  // PDFs get an inline, collapsible native preview (browsers render PDFs in an
+  // <object>), plus a download link — no viewer library, so nothing to bundle.
+  return <PdfFile part={part} t={t} />;
+}
+
+function PdfFile({ part, t }: { part: FilePart; t: RendererProps<FilePart>['context']['t'] }) {
+  const [open, setOpen] = useState(false);
   return (
-    <a
-      className="lch-part lch-file"
-      href={part.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      download={part.name}
-    >
-      <IconFile size={ICON_SIZE} aria-hidden="true" />
-      <span>{part.name}</span>
-      {typeof part.size === 'number' && <span>({formatBytes(part.size)})</span>}
-    </a>
+    <div className="lch-part" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span className="lch-file">
+          <IconFile size={ICON_SIZE} aria-hidden="true" />
+          <span>{part.name}</span>
+          {typeof part.size === 'number' && <span>({formatBytes(part.size)})</span>}
+        </span>
+        <button
+          type="button"
+          className="lch-file-btn"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+        >
+          {open ? (
+            <IconEyeOff size={ICON_SIZE} aria-hidden="true" />
+          ) : (
+            <IconEye size={ICON_SIZE} aria-hidden="true" />
+          )}
+          <span>{open ? t('message.hidePreview') : t('message.preview')}</span>
+        </button>
+        <a
+          className="lch-file-btn"
+          href={part.url}
+          download={part.name}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={t('message.download')}
+          title={t('message.download')}
+        >
+          <IconDownload size={ICON_SIZE} aria-hidden="true" />
+        </a>
+      </div>
+      {open && (
+        <object
+          data={part.url}
+          type="application/pdf"
+          aria-label={part.name}
+          style={{
+            width: '100%',
+            maxWidth: 420,
+            height: 360,
+            border: '1px solid var(--lch-border)',
+            borderRadius: 'var(--lch-radius-md)',
+            background: 'var(--lch-surface)',
+          }}
+        >
+          <a href={part.url} target="_blank" rel="noopener noreferrer">
+            {part.name}
+          </a>
+        </object>
+      )}
+    </div>
   );
 }
 
