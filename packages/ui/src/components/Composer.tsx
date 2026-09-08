@@ -203,6 +203,10 @@ export function Composer() {
               multiple
               accept="image/*,video/*,audio/*,*/*"
               onChange={onFilesPicked}
+              // Hidden + skipped in the tab order (the paperclip button drives it),
+              // but still labelled so it isn't an unlabelled form control.
+              aria-label={t('composer.attach')}
+              tabIndex={-1}
               className="hidden"
             />
             <Button

@@ -3,7 +3,7 @@ import type { ColorScheme, ThemeOverrides } from './theme';
 
 export type TransportKind = 'sse' | 'websocket';
 
-export type Locale = 'en' | 'vi' | 'ja' | 'zh' | 'id';
+export type Locale = 'en' | 'vi' | 'ja' | 'zh' | 'id' | 'ar' | 'he';
 
 /**
  * End-user-facing color-scheme choice. `'auto'` follows the OS

@@ -1,4 +1,5 @@
 import LiveChatHub from '@livechat-hub/sdk';
+import { createDomActions } from '../dom-actions';
 import './styles.css';
 
 const log = document.getElementById('log')!;
@@ -6,6 +7,10 @@ const line = (msg: string) => {
   log.textContent += `${new Date().toLocaleTimeString()}  ${msg}\n`;
   log.scrollTop = log.scrollHeight;
 };
+
+// DOM-primitive frontend actions (Sprint 5.6) — the agent can read + operate the
+// host page's signup form. Ask the widget to "fill the signup form".
+const dom = createDomActions(line);
 
 // Pick the transport with `?transport=ws` to stream over the WebSocket mock
 // (default is SSE). Both replay the same scenario engine.
@@ -23,7 +28,12 @@ const widget = LiveChatHub.init({
   locale: 'en',
   defaultOpen: true,
   // Suggested prompts shown on the empty state — click one to start chatting.
-  suggestions: ['What is the weather?', 'Change the background', 'Delete the note'],
+  suggestions: [
+    'What is the weather?',
+    'Change the background',
+    'Delete the note',
+    'Compare prices online',
+  ],
   // Frontend tools: the agent can act on THIS page, not just reply. Ask the
   // widget to "change the background" to see the agent call this in the browser.
   actions: [
@@ -57,9 +67,12 @@ const widget = LiveChatHub.init({
         return { ok: true, deleted: Boolean(note) };
       },
     },
+    // Generic DOM primitives (read / fill / click) — the browser-use client-side pack.
+    ...dom.actions,
   ],
-  // Live context the agent receives on every run (an AG-UI "readable").
-  context: [{ description: 'The demo page title', get: () => document.title }],
+  // Live context the agent receives on every run (AG-UI "readables"): the page
+  // title, plus the interactive-element tree for the DOM primitives.
+  context: [{ description: 'The demo page title', get: () => document.title }, dom.context],
   // Full end-user identity (Intercom-style) — forwarded to the agent; update it
   // later with `widget.identify(...)` without a re-init.
   user: { userId: 'demo-user', name: 'Demo Guest', traits: { plan: 'trial' } },
@@ -107,4 +120,12 @@ document.getElementById('send')?.addEventListener('click', () => {
 document.getElementById('csat')?.addEventListener('click', () => {
   widget.open();
   widget.requestCsat();
+});
+// Reflect the signup form submission (driven by the agent's dom.click) locally.
+document.getElementById('signup')?.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = (document.getElementById('signup-name') as HTMLInputElement | null)?.value ?? '';
+  const status = document.getElementById('signup-status');
+  if (status) status.textContent = name ? `Subscribed — thanks, ${name}!` : 'Subscribed!';
+  line(`form submitted → ${name || '(no name)'}`);
 });

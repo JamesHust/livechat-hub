@@ -48,6 +48,32 @@ function ConversationSheet({ onClose }: { onClose: () => void }) {
   const [showArchived, setShowArchived] = useState(false);
   // The thread whose title is being edited inline (null = none).
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Ids that matched a full-text (message-body) search across all threads. `null`
+  // while idle / not yet resolved — the instant title+preview filter still runs.
+  const [contentHits, setContentHits] = useState<Set<string> | null>(null);
+
+  // Debounced deep search: matches message bodies in every thread (loads each
+  // thread's history), unioned with the synchronous title/preview filter below.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setContentHits(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void store
+        .getState()
+        .searchConversationsFullText(q)
+        .then((ids) => {
+          if (!cancelled) setContentHits(new Set(ids));
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [query, store]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -58,12 +84,17 @@ function ConversationSheet({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   const archivedCount = conversations.filter((c) => c.archived).length;
-  // Filter by the query, then order (pinned first, recency after). Escape from
-  // the search box closes it; the list re-orders live as threads change.
-  const ordered = useMemo(
-    () => orderConversations(searchConversations(conversations, query), { showArchived }),
-    [conversations, query, showArchived],
-  );
+  // Filter by the query (title/preview instantly + message bodies once the deep
+  // search resolves), then order (pinned first, recency after).
+  const ordered = useMemo(() => {
+    if (!query.trim()) return orderConversations(conversations, { showArchived });
+    const matched = new Set(searchConversations(conversations, query).map((c) => c.id));
+    if (contentHits) for (const id of contentHits) matched.add(id);
+    return orderConversations(
+      conversations.filter((c) => matched.has(c.id)),
+      { showArchived },
+    );
+  }, [conversations, query, contentHits, showArchived]);
   const dayLabels = { today: t('message.today'), yesterday: t('message.yesterday') };
 
   const select = (id: string) => {

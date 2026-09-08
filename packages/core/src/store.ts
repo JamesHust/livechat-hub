@@ -19,7 +19,7 @@ import { AgUiEventType, type Transport } from '@livechat-hub/transport';
 import { createActionRegistry, type ContextProvider, type FrontendAction } from './actions';
 import { applyEventToMessages } from './reducer';
 import { applyJsonPatch } from './state-patch';
-import { messageText } from './search';
+import { messageText, searchMessages } from './search';
 import { createId } from './id';
 import { resolveSession } from './session';
 import {
@@ -139,6 +139,15 @@ export interface ChatActions {
    * on the message metadata and persisted; hosts observe it via the UI callback.
    */
   setFeedback(messageId: string, value: MessageFeedback): void;
+  /** Toggle an emoji reaction on a message (adds it, or removes it if present). */
+  toggleReaction(messageId: string, emoji: string): void;
+  /**
+   * Edit a message's text in place (human-chat style — no re-run). Replaces the
+   * first text part and flags the message `edited`. No-op for empty text.
+   */
+  editMessage(messageId: string, text: string): void;
+  /** Delete a message from the active conversation. */
+  deleteMessage(messageId: string): void;
   /** Read the persisted composer draft (empty string when none). */
   loadDraft(): string;
   /** Persist the composer draft; pass an empty string to clear it. */
@@ -159,6 +168,13 @@ export interface ChatActions {
   deleteConversation(id: string): void;
   /** Rename a conversation, pinning a title that auto-derivation won't overwrite. */
   renameConversation(id: string, title: string): void;
+  /**
+   * Full-text search across **all** conversations (not just the active thread):
+   * matches a thread's title/preview or any message body. Loads each thread's
+   * history from persistence on demand, so it's async. Returns the ids of the
+   * matching conversations; an empty query returns every conversation id.
+   */
+  searchConversationsFullText(query: string): Promise<string[]>;
   /** Pin (or unpin) a conversation to the top of the list, ahead of recency. */
   pinConversation(id: string, pinned: boolean): void;
   /** Archive (or unarchive) a conversation — hidden from the default list. */
@@ -865,6 +881,58 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         persistMessages();
       },
 
+      toggleReaction(messageId, emoji) {
+        const messages = get().messages;
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index === -1) return;
+        const current = messages[index]?.metadata?.reactions ?? [];
+        const next = current.includes(emoji)
+          ? current.filter((e) => e !== emoji)
+          : [...current, emoji];
+        set({
+          messages: messages.map((m, i) =>
+            i === index
+              ? { ...m, metadata: { ...m.metadata, reactions: next.length ? next : undefined } }
+              : m,
+          ),
+        });
+        persistMessages();
+      },
+
+      editMessage(messageId, text) {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const messages = get().messages;
+        const index = messages.findIndex((m) => m.id === messageId);
+        if (index === -1) return;
+        const target = messages[index]!;
+        // Replace the first text part; if there's none, prepend one.
+        let replaced = false;
+        const parts = target.parts.map((p) => {
+          if (!replaced && p.type === 'text') {
+            replaced = true;
+            return { ...p, text: trimmed };
+          }
+          return p;
+        });
+        const nextParts: MessagePart[] = replaced
+          ? parts
+          : [{ type: 'text', text: trimmed }, ...parts];
+        set({
+          messages: messages.map((m, i) =>
+            i === index ? { ...m, parts: nextParts, metadata: { ...m.metadata, edited: true } } : m,
+          ),
+        });
+        persistMessages();
+      },
+
+      deleteMessage(messageId) {
+        const messages = get().messages;
+        if (!messages.some((m) => m.id === messageId)) return;
+        set({ messages: messages.filter((m) => m.id !== messageId) });
+        persistMessages();
+      },
+
       loadDraft() {
         return persistence?.loadDraft() ?? '';
       },
@@ -941,6 +1009,30 @@ export function createChatStore(options: CreateChatStoreOptions): StoreApi<ChatS
         );
         set({ conversations: summaries });
         saveIndex();
+      },
+
+      async searchConversationsFullText(query) {
+        const needle = query.trim().toLowerCase();
+        const conversations = get().conversations;
+        if (!needle) return conversations.map((c) => c.id);
+        const activeId = get().activeConversationId;
+        const activeMessages = get().messages;
+        const hits: string[] = [];
+        for (const conv of conversations) {
+          // Cheap summary match first; only pay the history load when it misses.
+          const summaryText = [conv.title, conv.preview].filter(Boolean).join(' ').toLowerCase();
+          if (summaryText.includes(needle)) {
+            hits.push(conv.id);
+            continue;
+          }
+          // The active thread is already in memory; others load from persistence.
+          const messages =
+            conv.id === activeId
+              ? activeMessages
+              : ((await persistence?.loadMessages(conv.id).catch(() => [])) ?? []);
+          if (searchMessages(messages, query).length > 0) hits.push(conv.id);
+        }
+        return hits;
       },
 
       pinConversation(id, pinned) {

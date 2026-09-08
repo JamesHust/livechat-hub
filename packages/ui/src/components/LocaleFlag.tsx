@@ -32,6 +32,8 @@ function star(cx: number, cy: number, r: number): string {
 }
 
 const VN_STAR = star(12, 12, 6.6);
+// Star of David (two overlapping triangles) for the Israeli flag.
+const IL_STAR = 'M12 8L15.46 14L8.54 14Z M12 16L15.46 10L8.54 10Z';
 const CN_BIG = star(6, 7, 3.6);
 const CN_SMALL = [
   star(11.6, 3.2, 1.5),
@@ -78,6 +80,23 @@ const FLAGS: Record<Locale, ReactNode> = {
     <>
       <rect width="24" height="12" fill="#ce1126" />
       <rect y="12" width="24" height="12" fill="#fff" />
+    </>
+  ),
+  // Arabic — Saudi Arabia's green field (simplified; a language, shown by a
+  // representative national flag like the rest of the set).
+  ar: (
+    <>
+      <rect width="24" height="24" fill="#006c35" />
+      <rect x="4" y="16" width="16" height="1.6" rx="0.8" fill="#fff" />
+    </>
+  ),
+  // Hebrew — Israel: white field, two blue stripes, Star of David.
+  he: (
+    <>
+      <rect width="24" height="24" fill="#fff" />
+      <rect y="4" width="24" height="2.4" fill="#0038b8" />
+      <rect y="17.6" width="24" height="2.4" fill="#0038b8" />
+      <path d={IL_STAR} fill="none" stroke="#0038b8" strokeWidth="1.1" />
     </>
   ),
 };

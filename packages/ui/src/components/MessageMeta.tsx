@@ -1,4 +1,10 @@
-import { IconAlertCircle, IconCheck, IconLoader2 } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconLoader2,
+  IconPencil,
+  IconTrash,
+} from '@tabler/icons-react';
 import type { UIMessage } from '@livechat-hub/shared';
 import { useChatContext } from '../context';
 import { MessageActions } from './MessageActions';
@@ -12,6 +18,8 @@ export interface MessageMetaProps {
   isLast: boolean;
   /** True while this message is the active streaming target. */
   isStreaming: boolean;
+  /** Start inline-editing this (user) message; omit to hide the edit control. */
+  onEdit?: () => void;
 }
 
 /**
@@ -19,14 +27,17 @@ export interface MessageMetaProps {
  * chrome — a delivery indicator (+ resend) for user messages, and copy /
  * feedback / regenerate actions for finished assistant answers.
  */
-export function MessageMeta({ message, isUser, isLast, isStreaming }: MessageMetaProps) {
-  const { locale } = useChatContext();
+export function MessageMeta({ message, isUser, isLast, isStreaming, onEdit }: MessageMetaProps) {
+  const { t, locale, store } = useChatContext();
   const createdAt = message.metadata?.createdAt;
   const time = typeof createdAt === 'number' ? formatTime(locale, createdAt) : '';
+  const edited = message.metadata?.edited === true;
 
   // Assistant actions only make sense once the answer has finished streaming.
   const showActions = !isUser && !isStreaming && message.parts.length > 0;
-  if (!time && !isUser && !showActions) return null;
+  // Edit/delete affordances for a settled user message (hover-revealed).
+  const showUserActions = isUser && !isStreaming;
+  if (!time && !edited && !showActions && !showUserActions) return null;
 
   return (
     <div
@@ -40,8 +51,33 @@ export function MessageMeta({ message, isUser, isLast, isStreaming }: MessageMet
           {time}
         </time>
       )}
+      {edited && <span className="italic">{t('message.edited')}</span>}
       {isUser && <UserStatus message={message} />}
       {showActions && <MessageActions message={message} isLast={isLast} />}
+      {showUserActions && (
+        <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label={t('message.edit')}
+              title={t('message.edit')}
+              className="hover:text-foreground focus-visible:ring-ring/60 rounded p-0.5 outline-none focus-visible:ring-2"
+            >
+              <IconPencil className="size-3.5" aria-hidden="true" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => store.getState().deleteMessage(message.id)}
+            aria-label={t('message.delete')}
+            title={t('message.delete')}
+            className="hover:text-destructive focus-visible:ring-ring/60 rounded p-0.5 outline-none focus-visible:ring-2"
+          >
+            <IconTrash className="size-3.5" aria-hidden="true" />
+          </button>
+        </span>
+      )}
     </div>
   );
 }

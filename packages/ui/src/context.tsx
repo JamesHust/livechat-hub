@@ -15,6 +15,7 @@ import type { ChatStore } from '@livechat-hub/core';
 import {
   availableLocales,
   createTranslator,
+  isRtlLocale,
   LOCALE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   type Locale,
@@ -189,6 +190,16 @@ export function ChatProvider({
     mq.addEventListener('change', apply);
     return () => mq.removeEventListener('change', apply);
   }, [themeMode, themeOverrides]);
+
+  // Flip the widget's writing direction for RTL locales (Arabic / Hebrew). Scoped
+  // to the same host element the theme applies to, so it never touches the host
+  // page. Logical CSS + flex `*-reverse`/`start`/`end` utilities handle the rest.
+  useLayoutEffect(() => {
+    const anchor = themeAnchorRef.current;
+    if (!anchor) return;
+    const host = anchor.closest<HTMLElement>('.lch-root') ?? anchor.ownerDocument.documentElement;
+    host.dir = isRtlLocale(locale) ? 'rtl' : 'ltr';
+  }, [locale]);
 
   const resolvedRenderers = useMemo(() => resolveRenderers(renderers), [renderers]);
   // Built-in generative components (bar_chart, …) merged under host overrides,
